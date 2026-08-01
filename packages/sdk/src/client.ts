@@ -46,12 +46,14 @@ import {
   sealEnvelope,
   openEnvelope,
   signTyped,
+  ed25519Sign,
   ed25519Verify,
   sha256,
   randomBytes,
   toBase64Url,
   fromBase64Url,
   toHex,
+  utf8ToBytes,
   type RawKeyPair,
 } from "@vault/crypto-core";
 import type { DelegationSigner } from "./delegation.js";
@@ -170,12 +172,16 @@ export class VaultClient {
     this.keys.set(sessionTopic, sessionKey);
     await this.transport.subscribe(sessionTopic);
 
-    // Obtain a delegation, now that we know the vault id.
+    // Obtain a delegation, now that we know the vault id. The signChallenge
+    // callback lets the backend prove we control d_sess (proof-of-possession)
+    // without the private key ever leaving this client.
+    const dsessSeed = this.dsess.privateKey;
     const delegation = await this.config.delegationSigner.getDelegation({
       sessionPublicKey: toBase64Url(this.dsess.publicKey),
       scopes,
       pairingChallenge,
       vaultId: handshake.vaultId,
+      signChallenge: (challenge: string) => toBase64Url(ed25519Sign(utf8ToBytes(challenge), dsessSeed)),
     });
 
     // Build and sign the ConnectMessage (binds both ECDH pubkeys + transcript).

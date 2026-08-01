@@ -17,6 +17,12 @@ export interface DelegationRequest {
   pairingChallenge: string;
   /** Binds the delegation to the specific vault it will be presented to. */
   vaultId: string;
+  /**
+   * Proof-of-possession callback: signs a server-issued challenge with d_sess.
+   * The backend verifies this so a stolen cookie cannot mint a delegation for an
+   * attacker-chosen key. Supplied by VaultClient (which holds d_sess).
+   */
+  signChallenge: (challenge: string) => string;
 }
 
 export interface DelegationSigner {
@@ -32,6 +38,7 @@ export interface LocalDelegationSignerOptions {
   clock?: () => number;
 }
 
+/** Same-process signer for tests/demos. Skips the network + PoP round-trip. */
 export class LocalDelegationSigner implements DelegationSigner {
   constructor(private readonly opts: LocalDelegationSignerOptions) {}
 
@@ -53,23 +60,53 @@ export class LocalDelegationSigner implements DelegationSigner {
   }
 }
 
+export interface HttpDelegationSignerOptions {
+  /** GET here (with credentials) to obtain a fresh challenge + CSRF token. */
+  challengeUrl: string;
+  /** POST here (with credentials + CSRF header) to mint the delegation. */
+  mintUrl: string;
+  /** Origin header value (set automatically by the browser; explicit in Node). */
+  origin?: string;
+  fetchImpl?: typeof fetch;
+}
+
+interface ChallengeResponse {
+  challenge: string;
+  csrfToken: string;
+}
+
 /**
- * A DelegationSigner that calls a backend endpoint. The endpoint MUST enforce
- * CSRF, an Origin allow-list, and proof-of-possession (the browser signs a fresh
- * server challenge with d_sess before the delegation is minted).
+ * Production signer: runs the challenge → proof-of-possession → mint flow against
+ * the app's backend. The backend enforces CSRF, an Origin allow-list, PoP, and a
+ * static scope clamp before signing.
  */
 export class HttpDelegationSigner implements DelegationSigner {
-  constructor(
-    private readonly endpoint: string,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+  private readonly fetchImpl: typeof fetch;
+  constructor(private readonly opts: HttpDelegationSignerOptions) {
+    this.fetchImpl = opts.fetchImpl ?? fetch;
+  }
 
   async getDelegation(req: DelegationRequest): Promise<SessionDelegation> {
-    const res = await this.fetchImpl(this.endpoint, {
+    const chalRes = await this.fetchImpl(this.opts.challengeUrl, { method: "GET", credentials: "include" });
+    if (!chalRes.ok) throw new Error(`challenge endpoint returned ${chalRes.status}`);
+    const { challenge, csrfToken } = (await chalRes.json()) as ChallengeResponse;
+
+    const popSig = req.signChallenge(challenge);
+    const headers: Record<string, string> = { "content-type": "application/json", "x-csrf-token": csrfToken };
+    if (this.opts.origin) headers["origin"] = this.opts.origin;
+
+    const res = await this.fetchImpl(this.opts.mintUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers,
       credentials: "include",
-      body: JSON.stringify(req),
+      body: JSON.stringify({
+        sessionPublicKey: req.sessionPublicKey,
+        scopes: req.scopes,
+        pairingChallenge: req.pairingChallenge,
+        vaultId: req.vaultId,
+        challenge,
+        popSig,
+      }),
     });
     if (!res.ok) throw new Error(`delegation endpoint returned ${res.status}`);
     return (await res.json()) as SessionDelegation;
