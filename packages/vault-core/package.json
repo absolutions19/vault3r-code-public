@@ -1,6 +1,6 @@
 {
   "name": "@vault/vault-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "VAULT engine (platform-agnostic): identity verification pipeline, namespace derivation, permission grant store, request chokepoint, session state machine, and keystore/storage adapter interfaces with in-memory implementations.",
