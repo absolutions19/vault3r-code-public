@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["VaultKeystoreModule"]
+  },
+  "android": {
+    "modules": ["app.vault.keystore.VaultKeystoreModule"]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "Vault",
+    "slug": "vault",
+    "scheme": "vault",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "app.vault.client",
+      "supportsTablet": false,
+      "associatedDomains": ["applinks:vault.app"],
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Vault uses Face ID to unlock your encrypted data and approve access requests.",
+        "NSCameraUsageDescription": "Vault uses the camera to scan pairing QR codes."
+      }
+    },
+    "android": {
+      "package": "app.vault.client",
+      "permissions": ["USE_BIOMETRIC", "CAMERA"],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [{ "scheme": "https", "host": "vault.app", "pathPrefix": "/pair" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-local-authentication",
+      "expo-camera",
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "android": { "minSdkVersion": 28 },
+          "ios": { "deploymentTarget": "15.1" }
+        }
+      ]
+    ]
+  }
+}

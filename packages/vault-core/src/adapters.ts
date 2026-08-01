@@ -38,15 +38,16 @@ export interface KeystoreAdapter {
   /** Per-operation biometric check (returns false if failed/cancelled). */
   authenticate(req: AuthRequest): Promise<boolean>;
 
-  /** Seal plaintext for a namespace (per-namespace subkey + AEAD, aad bound). */
-  sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Uint8Array;
-  /** Open a sealed namespace blob; returns null on authentication failure. */
-  openNamespace(storageKey: string, aad: Uint8Array, blob: Uint8Array): Uint8Array | null;
+  /** Seal plaintext for a namespace (per-namespace subkey + AEAD, aad bound).
+   *  Async because a native keystore performs this off the JS heap. */
+  sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array>;
+  /** Open a sealed namespace blob; resolves null on authentication failure. */
+  openNamespace(storageKey: string, aad: Uint8Array, blob: Uint8Array): Promise<Uint8Array | null>;
 
   /** The vault's device public key (base64url Ed25519) used to sign responses. */
   deviceKeyPublic(): Base64Url;
   /** Sign bytes with the device key (settle + response authentication). */
-  signDevice(bytes: Uint8Array): Base64Url;
+  signDevice(bytes: Uint8Array): Promise<Base64Url>;
 
   /** A stable per-install id, unique to this vault (used in the typed domain). */
   vaultId(): string;

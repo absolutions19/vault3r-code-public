@@ -102,6 +102,16 @@ export class VaultEngine {
     return this.keystore.vaultId();
   }
 
+  /** Connected apps, for the vault's own management UI. */
+  listConnections(): { sessionId: string; grant: Grant; expiresAt: number }[] {
+    return this.sessions.all().map((s) => ({ sessionId: s.id, grant: s.grant, expiresAt: s.expiresAt }));
+  }
+
+  /** User-initiated revocation from the vault UI (no signed request required). */
+  adminRevoke(sessionId: string): void {
+    this.sessions.delete(sessionId);
+  }
+
   async unlock(): Promise<boolean> {
     return this.keystore.unlock({ reason: "unlock", prompt: "Unlock your vault" });
   }
@@ -186,7 +196,7 @@ export class VaultEngine {
       this.knownDomains.push(verified.verification.domain);
     }
 
-    const vaultSig = this.keystore.signDevice(
+    const vaultSig = await this.keystore.signDevice(
       settleSigningPreimage({
         sessionId,
         namespace: session.namespace,

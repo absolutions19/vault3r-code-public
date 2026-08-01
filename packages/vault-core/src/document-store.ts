@@ -51,13 +51,13 @@ export class DocumentStore {
   private async loadManifest(): Promise<Record<string, number>> {
     const blob = await this.storage.get(MANIFEST_KEY);
     if (!blob) return {};
-    const pt = this.keystore.openNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, blob);
+    const pt = await this.keystore.openNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, blob);
     if (pt === null) throw VaultError.of("KeyInvalidated", "manifest failed to authenticate (tampering?)");
     return JSON.parse(bytesToUtf8(pt)) as Record<string, number>;
   }
 
   private async saveManifest(m: Record<string, number>): Promise<void> {
-    const blob = this.keystore.sealNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, utf8ToBytes(JSON.stringify(m)));
+    const blob = await this.keystore.sealNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, utf8ToBytes(JSON.stringify(m)));
     await this.storage.put(MANIFEST_KEY, blob);
   }
 
@@ -70,7 +70,7 @@ export class DocumentStore {
       if (expected > 0) throw VaultError.of("KeyInvalidated", "namespace blob missing (rollback/deletion)");
       return { doc: {}, version: 0 };
     }
-    const pt = this.keystore.openNamespace(storageKey, docAad(storageKey), blob);
+    const pt = await this.keystore.openNamespace(storageKey, docAad(storageKey), blob);
     if (pt === null) throw VaultError.of("KeyInvalidated", "namespace blob failed to authenticate");
     const parsed = JSON.parse(bytesToUtf8(pt)) as SealedDoc;
     if (parsed.v < expected) throw VaultError.of("KeyInvalidated", "namespace blob is stale (rollback)");
@@ -80,7 +80,7 @@ export class DocumentStore {
   /** Persist a new version of a namespace document and advance the manifest. */
   async save(storageKey: string, doc: Json, newVersion: number): Promise<void> {
     const payload: SealedDoc = { v: newVersion, doc };
-    const blob = this.keystore.sealNamespace(storageKey, docAad(storageKey), utf8ToBytes(JSON.stringify(payload)));
+    const blob = await this.keystore.sealNamespace(storageKey, docAad(storageKey), utf8ToBytes(JSON.stringify(payload)));
     await this.storage.put(docStorageId(storageKey), blob);
     const manifest = await this.loadManifest();
     manifest[storageKey] = newVersion;

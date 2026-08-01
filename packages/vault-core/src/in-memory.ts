@@ -79,14 +79,14 @@ export class InMemoryKeystore implements KeystoreAdapter {
     return hkdfSha256(this.masterDek, salt, info, 32);
   }
 
-  sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Uint8Array {
+  async sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
     const key = this.nsKey(storageKey);
     const nonce = randomBytes(24);
     const box = xchachaSeal(key, nonce, plaintext, aad);
     return concatBytes(new Uint8Array([PACK_VERSION]), box.nonce, box.tag, box.ciphertext);
   }
 
-  openNamespace(storageKey: string, aad: Uint8Array, blob: Uint8Array): Uint8Array | null {
+  async openNamespace(storageKey: string, aad: Uint8Array, blob: Uint8Array): Promise<Uint8Array | null> {
     const key = this.nsKey(storageKey);
     if (blob.length < 1 + 24 + 16 || blob[0] !== PACK_VERSION) return null;
     const nonce = blob.subarray(1, 25);
@@ -99,7 +99,7 @@ export class InMemoryKeystore implements KeystoreAdapter {
     return toBase64Url(this.device.publicKey);
   }
 
-  signDevice(bytes: Uint8Array): Base64Url {
+  async signDevice(bytes: Uint8Array): Promise<Base64Url> {
     return toBase64Url(ed25519Sign(bytes, this.device.privateKey));
   }
 
