@@ -17,6 +17,7 @@ import {
   MAX_PATHS_PER_REQUEST,
   MAX_PATCH_OPS,
   MAX_NAMESPACE_BYTES,
+  MAX_JSON_DEPTH,
   makeNotification,
   settleSigningPreimage,
   type SessionProposeParams,
@@ -53,7 +54,7 @@ import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, Revocati
 import { systemClock } from "./adapters.js";
 import { DocumentStore, versionToEtag, etagToVersion } from "./document-store.js";
 import { fieldAllows, intersectScopes, normalizeFields, pathIsSensitive } from "./grants.js";
-import { pointerGet, pointerRemove, pointerSet, type Json } from "./json-pointer.js";
+import { pointerGet, pointerRemove, pointerSet, withinDepth, type Json } from "./json-pointer.js";
 import { ReplayGuard } from "./replay.js";
 import { SessionStore, type Session } from "./session.js";
 import { verifyProposal } from "./identity-verify.js";
@@ -65,6 +66,8 @@ export interface VaultEngineConfig {
   consent: ConsentAdapter;
   /** Optional short-TTL key-revocation checker (record.statusEndpoint). */
   revocation?: RevocationChecker;
+  /** How often to re-check revocation on the data plane (ms). Default 60s. */
+  revocationRecheckMs?: number;
   clock?: Clock;
   knownDomains?: string[];
   sessionTtlMs?: number;
@@ -84,6 +87,7 @@ export class VaultEngine {
   private readonly resolver: IdentityResolver;
   private readonly consent: ConsentAdapter;
   private readonly revocation: RevocationChecker | undefined;
+  private readonly revocationRecheckMs: number;
   private readonly clock: Clock;
   private readonly docStore: DocumentStore;
   private readonly sessions = new SessionStore();
@@ -98,6 +102,7 @@ export class VaultEngine {
     this.resolver = config.resolver;
     this.consent = config.consent;
     this.revocation = config.revocation;
+    this.revocationRecheckMs = config.revocationRecheckMs ?? 60_000;
     this.clock = config.clock ?? systemClock;
     this.docStore = new DocumentStore(config.keystore, config.storage);
     this.sessionTtlMs = config.sessionTtlMs ?? SESSION_DEFAULT_TTL_MS;
@@ -199,6 +204,9 @@ export class VaultEngine {
       deviceKeyPub,
       createdAt: now,
       expiresAt,
+      statusEndpoint: verified.statusEndpoint,
+      identityKid: verified.verification.identityKid,
+      lastRevocationCheckAt: now,
       writePolicy,
       writeApprovedThisSession: false,
       subscriptions: new Map(),
@@ -240,11 +248,37 @@ export class VaultEngine {
     try {
       const session = this.requireSession(sessionId);
       if (!this.keystore.isUnlocked()) throw VaultError.of("VaultLocked");
+      await this.enforceRevocation(session, false);
       const result = await this.dispatch(session, req);
       return makeSuccess(req.id, result);
     } catch (err) {
       return makeFailure(req.id, VaultError.fromUnknown(err).toRpcError());
     }
+  }
+
+  /**
+   * Re-check the pinned revocation status on the data plane so a key revoked
+   * AFTER connect loses access without waiting for the session to expire. Cached
+   * to `revocationRecheckMs` on normal requests; `force` bypasses the cache (used
+   * on session extension). Fails closed: a revoked key OR a checker error tears
+   * the session down.
+   */
+  private async enforceRevocation(session: Session, force: boolean): Promise<void> {
+    if (!this.revocation || !session.statusEndpoint || !session.identityKid) return;
+    const now = this.clock.now();
+    if (!force && now - session.lastRevocationCheckAt < this.revocationRecheckMs) return;
+    let revoked: boolean;
+    try {
+      revoked = await this.revocation.isRevoked(session.statusEndpoint, session.identityKid);
+    } catch {
+      this.sessions.delete(session.id);
+      throw VaultError.of("Disconnected", "revocation status could not be re-checked");
+    }
+    if (revoked) {
+      this.sessions.delete(session.id);
+      throw VaultError.of("Disconnected", "identity key has been revoked");
+    }
+    session.lastRevocationCheckAt = now;
   }
 
   private requireSession(sessionId: string): Session {
@@ -356,7 +390,6 @@ export class VaultEngine {
   private async patchData(session: Session, params: PatchDataParams): Promise<PatchDataResult> {
     const msg = this.authorizeSigned(session, params, "VaultPatch", Method.PatchData);
     const changes = (msg["changes"] as ChangeDescriptor[]) ?? [];
-    if (changes.length > MAX_PATCH_OPS) throw VaultError.of("QuotaExceeded", "too many patch ops");
     const version = await this.applyChanges(session, changes, params.values, msg["baseVersion"] as string | undefined);
     return { applied: true, version: versionToEtag(version) };
   }
@@ -368,6 +401,10 @@ export class VaultEngine {
     values: Record<string, unknown>,
     baseVersion: string | undefined,
   ): Promise<number> {
+    // Op-count cap enforced here so it applies to BOTH setData and patchData
+    // (they funnel through this one chokepoint).
+    if (changes.length > MAX_PATCH_OPS) throw VaultError.of("QuotaExceeded", "too many changes in one request");
+
     // Write-policy gating.
     const anySensitive = changes.some((c) => pathIsSensitive(session.grant.fields, c.path));
     const needBiometric =
@@ -415,6 +452,11 @@ export class VaultEngine {
       changedPaths.push(path);
     }
 
+    // Stored-doc depth cap: keep the document re-parseable by a strict peer
+    // (paths add nesting on top of value nesting, so this is checked here).
+    if (!withinDepth(doc, MAX_JSON_DEPTH)) {
+      throw VaultError.of("QuotaExceeded", "namespace document exceeds nesting depth");
+    }
     // Per-namespace document quota (measured on the UTF-8 serialization).
     if (utf8ToBytes(JSON.stringify(doc)).length > MAX_NAMESPACE_BYTES) {
       throw VaultError.of("QuotaExceeded", "namespace document exceeds size cap");
@@ -450,6 +492,7 @@ export class VaultEngine {
   private async subscribe(session: Session, params: SubscribeParams): Promise<SubscribeResult> {
     const msg = this.authorizeSigned(session, params, "VaultRead", Method.Subscribe);
     const paths = (msg["paths"] as string[]) ?? [];
+    if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many subscription paths");
     for (const path of paths) {
       if (!fieldAllows(session.grant.fields, path, "read")) {
         throw VaultError.of("FieldOutOfScope", `read not granted: ${path}`);
@@ -479,6 +522,8 @@ export class VaultEngine {
       this.sessions.delete(session.id);
       throw VaultError.of("Disconnected", "session at absolute cap; reconnect required");
     }
+    // Never extend a session whose key has since been revoked (always re-check).
+    await this.enforceRevocation(session, true);
     // Honoring an extension requires a fresh biometric.
     const ok = await this.keystore.authenticate({ reason: "grant-change", prompt: "Extend session" });
     if (!ok) throw VaultError.of("BiometricFailed");

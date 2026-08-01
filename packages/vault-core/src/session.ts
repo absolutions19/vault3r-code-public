@@ -20,6 +20,10 @@ export interface Session {
   deviceKeyPub: Base64Url;
   createdAt: number;
   expiresAt: number;
+  /** Pinned revocation-status endpoint + key id for data-plane re-checks. */
+  statusEndpoint: string | null;
+  identityKid: string | null;
+  lastRevocationCheckAt: number;
   writePolicy: WritePolicy;
   /** For "ask-once-per-session": set once the user has approved a write. */
   writeApprovedThisSession: boolean;

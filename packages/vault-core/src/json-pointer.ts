@@ -13,9 +13,12 @@ export type Json = null | boolean | number | string | Json[] | { [k: string]: Js
 const MAX_TOKENS = 64;
 
 /** Parse a JSON Pointer into its reference tokens. */
+const utf8 = new TextEncoder();
+
 export function parsePointer(pointer: string): string[] {
   if (typeof pointer !== "string") throw VaultError.of("FieldOutOfScope", "pointer must be a string");
-  if (pointer.length > MAX_FIELD_PATH_LEN) throw VaultError.of("QuotaExceeded", "pointer too long");
+  // Measured in UTF-8 bytes, consistent with the other byte-denominated caps.
+  if (utf8.encode(pointer).length > MAX_FIELD_PATH_LEN) throw VaultError.of("QuotaExceeded", "pointer too long");
   if (pointer === "") return [];
   if (!pointer.startsWith("/")) {
     throw VaultError.of("FieldOutOfScope", `pointer must be empty or start with '/': ${pointer}`);
@@ -65,8 +68,13 @@ export function pointerSet(doc: Json, pointer: string, value: Json): Json {
       if (!isPlainObject(next) && !Array.isArray(next)) cur[t] = {};
       cur = cur[t] as Json;
     } else if (Array.isArray(cur)) {
-      const idx = Number(t);
-      if (!Number.isInteger(idx) || idx < 0) throw VaultError.of("FieldOutOfScope", `bad array index: ${t}`);
+      // Bound the index to the existing array (append via '-'), exactly like the
+      // leaf branch — otherwise a huge index materializes a multi-GB sparse array
+      // (and OOMs inside the later JSON.stringify size check).
+      const idx = t === "-" ? cur.length : Number(t);
+      if (!Number.isInteger(idx) || idx < 0 || idx > cur.length) {
+        throw VaultError.of("FieldOutOfScope", `bad array index: ${t}`);
+      }
       if (!isPlainObject(cur[idx]) && !Array.isArray(cur[idx])) cur[idx] = {};
       cur = cur[idx] as Json;
     } else {
@@ -109,6 +117,18 @@ export function pointerRemove(doc: Json, pointer: string): Json {
     if (Number.isInteger(idx) && idx >= 0 && idx < cur.length) cur.splice(idx, 1);
   }
   return root;
+}
+
+/**
+ * True iff the value nests no deeper than `maxDepth` container levels. Short-
+ * circuits as soon as the budget is exceeded, so it is safe (bounded recursion)
+ * even on adversarially deep input.
+ */
+export function withinDepth(v: Json, maxDepth: number): boolean {
+  if (maxDepth < 0) return false;
+  if (Array.isArray(v)) return v.every((x) => withinDepth(x, maxDepth - 1));
+  if (isPlainObject(v)) return Object.values(v).every((x) => withinDepth(x as Json, maxDepth - 1));
+  return true;
 }
 
 export interface PatchOp {

@@ -60,6 +60,7 @@ class TestClient {
       Method.Revoke,
       Method.GetPermissions,
     ],
+    keyStatus: "active" | "retired" | "revoked" = "active",
   ) {
     this.domainKey = ed25519Generate();
     this.sessKey = ed25519Generate();
@@ -76,7 +77,7 @@ class TestClient {
             alg: "Ed25519",
             publicKey: toBase64Url(this.domainKey.publicKey),
             created: "2026-01-01T00:00:00Z",
-            status: "active",
+            status: keyStatus,
           },
         ],
         statusEndpoint: `https://${domain}/.well-known/vault-status`,
@@ -186,6 +187,14 @@ class TestClient {
 
   subscribe(sessionId: string, paths: string[]) {
     return makeRequest(this.nextNonce(), Method.Subscribe, this.signed("VaultRead", sessionId, { paths }));
+  }
+
+  writeMany(sessionId: string, entries: { path: string; value: unknown }[]) {
+    const changes = entries.map((e) => ({ op: "replace" as const, path: e.path, valueHash: hashJsonValue(e.value as never) }));
+    const values: Record<string, unknown> = {};
+    for (const e of entries) values[e.path] = e.value;
+    const s = this.signed("VaultWrite", sessionId, { changes });
+    return makeRequest(this.nextNonce(), Method.SetData, { ...s, values });
   }
 
   extend(sessionId: string, requestedTtlMs: number) {
@@ -498,6 +507,28 @@ describe("VaultEngine — input hardening caps", () => {
     const r = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/blob", big));
     expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
   });
+
+  it("caps the number of changes on setData too (not just patch)", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const entries = Array.from({ length: 200 }, (_, k) => ({ path: `/profile/k${k}`, value: k })); // > MAX_PATCH_OPS (128)
+    const r = await engine.handleRequest(sessionId, alice.writeMany(sessionId, entries));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("caps the number of subscription paths", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const paths = Array.from({ length: 200 }, () => "/profile");
+    const r = await engine.handleRequest(sessionId, alice.subscribe(sessionId, paths));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("rejects a write that nests deeper than MAX_JSON_DEPTH", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    let deep: unknown = 1;
+    for (let k = 0; k < 40; k++) deep = { x: deep }; // 40 > MAX_JSON_DEPTH (32)
+    const r = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/deep", deep));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
 });
 
 describe("VaultEngine — key revocation", () => {
@@ -550,6 +581,68 @@ describe("VaultEngine — key revocation", () => {
       clock,
     });
     await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+    });
+  });
+
+  it("revokes data-plane access when the key is revoked AFTER connect (TOCTOU)", async () => {
+    const revocation = new StaticRevocationChecker();
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation,
+      revocationRecheckMs: 0, // re-check every request
+      clock,
+    });
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    // Works before revocation.
+    expect("result" in (await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", 1)))).toBe(true);
+    // Revoke the key mid-session.
+    revocation.revoke("https://example.com/.well-known/vault-status", "k1");
+    const rRead = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/a"]));
+    const rWrite = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", 2));
+    expect(failure(rRead).error.code).toBe(ErrorCode.Disconnected);
+    expect(failure(rWrite).error.code).toBe(ErrorCode.Disconnected);
+  });
+
+  it("refuses to extend a session whose key was revoked after connect", async () => {
+    const revocation = new StaticRevocationChecker();
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation,
+      revocationRecheckMs: 60_000, // NOT re-checked on normal cadence within the test window
+      clock,
+    });
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    revocation.revoke("https://example.com/.well-known/vault-status", "k1");
+    // extend forces a fresh revocation check regardless of cadence.
+    const r = await engine.handleRequest(sessionId, alice.extend(sessionId, 6 * 60 * 60_000));
+    expect(failure(r).error.code).toBe(ErrorCode.Disconnected);
+  });
+
+  it("rejects a fresh delegation signed by a RETIRED key", async () => {
+    const retired = new TestClient(
+      "retired.example",
+      "vault-under-test",
+      [{ path: "/profile", read: true, write: true }],
+      undefined,
+      "retired",
+    );
+    resolver.set(retired.record);
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      clock,
+    });
+    // A retired key may not mint new authority — connect must fail.
+    await expect(engine.connect(retired.proposal().params, retired.proposal().ctx)).rejects.toMatchObject({
       code: ErrorCode.IdentityUnverified,
     });
   });

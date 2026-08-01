@@ -7,7 +7,7 @@
  *   0x01 | nonce(24) | tag(16) | ciphertext(...)
  */
 
-import { canonicalBytes, parseJsonStrict, MAX_PLAINTEXT_BYTES, type EnvelopeAad } from "@vault/protocol";
+import { canonicalBytes, parseJsonStrict, MAX_PLAINTEXT_BYTES, MAX_ENVELOPE_BYTES, type EnvelopeAad } from "@vault/protocol";
 import { xchachaSeal, xchachaOpen, XCHACHA_NONCE_BYTES, XCHACHA_TAG_BYTES } from "./xchacha.js";
 import { randomBytes } from "./primitives.js";
 import { toBase64Url, fromBase64Url, utf8ToBytes, bytesToUtf8, concatBytes } from "./encoding.js";
@@ -35,7 +35,14 @@ export function sealEnvelope(sessionKey: Uint8Array, aad: EnvelopeAad, body: unk
 
 /** Decrypt a base64url payload. Returns the parsed body, or throws on failure. */
 export function openEnvelope<T = unknown>(sessionKey: Uint8Array, aad: EnvelopeAad, payload: string): T {
+  // Reject oversized frames BEFORE base64-decoding or decrypting them, so a huge
+  // ciphertext can't force a large allocation + a full AEAD pass. base64 expands
+  // ~4/3, so cap the encoded length accordingly.
+  if (payload.length > Math.ceil((MAX_ENVELOPE_BYTES * 4) / 3) + 4) {
+    throw new Error("envelope frame exceeds size cap");
+  }
   const packed = fromBase64Url(payload);
+  if (packed.length > MAX_ENVELOPE_BYTES) throw new Error("envelope frame exceeds size cap");
   const headerLen = 1 + XCHACHA_NONCE_BYTES + XCHACHA_TAG_BYTES;
   if (packed.length < headerLen) throw new Error("envelope too short");
   if (packed[0] !== VERSION_BYTE) throw new Error("unsupported envelope version");

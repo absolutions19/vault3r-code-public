@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryKeystore, InMemoryStorage } from "./in-memory.js";
 import { DocumentStore } from "./document-store.js";
-import { pointerGet, pointerSet, pointerRemove, applyPatch } from "./json-pointer.js";
+import { pointerGet, pointerSet, pointerRemove, applyPatch, withinDepth } from "./json-pointer.js";
 import { pointerCovers, fieldAllows } from "./grants.js";
 import { isVaultError, ErrorCode } from "@vault/protocol";
 
@@ -19,6 +19,24 @@ describe("json pointer", () => {
     const doc = pointerSet({}, "/a~1b/c~0d", 9); // key "a/b" then "c~d"
     expect(pointerGet(doc, "/a~1b/c~0d")).toBe(9);
   });
+  it("rejects an intermediate array index past the array end (no sparse-array blowup)", () => {
+    let doc: import("./json-pointer.js").Json = {};
+    doc = pointerSet(doc, "/arr", []);
+    // A huge intermediate index must be refused, not materialize a ~4e9 array.
+    expect(() => pointerSet(doc, "/arr/4000000000/x", 1)).toThrow();
+    expect(() => pointerSet(doc, "/arr/5/x", 1)).toThrow(); // past end (length 0)
+    // Appending in-bounds still works.
+    doc = pointerSet(doc, "/arr/0", { a: 1 });
+    expect(pointerGet(doc, "/arr/0")).toEqual({ a: 1 });
+  });
+
+  it("withinDepth bounds nesting (short-circuits, no deep recursion)", () => {
+    const deep = (n: number): import("./json-pointer.js").Json => (n === 0 ? 1 : { x: deep(n - 1) });
+    expect(withinDepth(deep(10), 32)).toBe(true);
+    expect(withinDepth(deep(40), 32)).toBe(false);
+    expect(withinDepth({ a: 1, b: [1, 2] }, 2)).toBe(true);
+  });
+
   it("applies an RFC6902 patch with a test guard", () => {
     const doc = applyPatch({ n: 1 }, [
       { op: "test", path: "/n", value: 1 },

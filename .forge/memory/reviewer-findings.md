@@ -57,6 +57,14 @@ Tracks Forge review findings for the VAULT monorepo and their resolution.
 
 **Tagged as v0.2.1 (Forge-approved).** v0.1.0 and v0.2.1 are the approved checkpoints.
 
+## v0.2.2 adversarial red-team (internal multi-agent workflow, not Forge)
+
+A 5-agent attack→verify workflow probed the new input-hardening controls and found **12 confirmed real bugs** (base64url was sound). All fixed + regression-tested (144 tests total):
+
+- **strict-json (4, medium):** number grammar holes — leading zeros (`01`), trailing dot (`1.`), missing frac before exp (`1.e5`), negative-no-int (`-.5`). Fixed `parseNumber` to RFC 8259; added a differential fuzz test vs `JSON.parse`.
+- **input-caps (6):** `set_data` bypassed `MAX_PATCH_OPS` (moved cap into shared `applyChanges`); `subscribe` bypassed `MAX_PATHS_PER_REQUEST` (added cap); **HIGH** intermediate array index → multi-GB sparse-array OOM (bounded index to `cur.length`); `MAX_JSON_DEPTH` unenforced on the stored doc (added `withinDepth` check); `MAX_FIELD_PATH_LEN` measured in UTF-16 not bytes (now bytes); **HIGH** `MAX_ENVELOPE_BYTES` never enforced in `openEnvelope` (now rejected pre-decode).
+- **revocation (2):** **HIGH** TOCTOU — a key revoked after connect kept access for the session lifetime (now re-checked on the data plane with a short cache TTL, and unconditionally on extend, fail-closed); `retired` keys could mint fresh delegations (`keyUsable` now requires `active`).
+
 ## Notes
 
 - The identity-spoofing guarantee is enforced in two independent places (the on-device resolver and the engine's `identity-verify` chokepoint), both PSL-aware.

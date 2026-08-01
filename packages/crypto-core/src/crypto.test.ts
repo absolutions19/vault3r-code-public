@@ -53,6 +53,30 @@ describe("encoding", () => {
     const s = toBase64Url(b);
     expect(toBase64Url(fromBase64Url(s))).toBe(s);
   });
+  it("exhaustive injectivity over all length-2 strings (no collisions, canonical only)", () => {
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const seen = new Map<string, string>();
+    let accepted = 0;
+    for (const a of alphabet) {
+      for (const b of alphabet) {
+        const s = a + b;
+        let bytes: Uint8Array | null = null;
+        try {
+          bytes = fromBase64Url(s);
+        } catch {
+          bytes = null;
+        }
+        if (!bytes) continue;
+        accepted++;
+        expect(toBase64Url(bytes), `${s} must be canonical`).toBe(s); // canonical => re-encodes to itself
+        const key = toHex(bytes);
+        expect(seen.has(key), `collision ${s} vs ${seen.get(key)}`).toBe(false);
+        seen.set(key, s);
+      }
+    }
+    // 256 canonical length-2 strings decode to the 256 distinct single bytes.
+    expect(accepted).toBe(256);
+  });
   it("timingSafeEqual", () => {
     expect(timingSafeEqual(fromHex("aabb"), fromHex("aabb"))).toBe(true);
     expect(timingSafeEqual(fromHex("aabb"), fromHex("aabc"))).toBe(false);
@@ -179,5 +203,12 @@ describe("handshake + session envelope end to end", () => {
     // MAX_PLAINTEXT_BYTES is 128 KiB; a ~130 KB body must be rejected on open.
     const payload = sealEnvelope(k, aad, { big: "x".repeat(130 * 1024) });
     expect(() => openEnvelope(k, aad, payload)).toThrow(/size cap/);
+  });
+
+  it("rejects an oversized frame BEFORE decoding/decrypting (envelope cap)", () => {
+    const k = randomBytes(32);
+    const aad: EnvelopeAad = { topic: "t1", tag: "rpc", pv: "1", msgType: "rpc", dir: "c2v" };
+    // A ~400 KB base64url string exceeds the MAX_ENVELOPE_BYTES (256 KiB) frame cap.
+    expect(() => openEnvelope(k, aad, "A".repeat(400_000))).toThrow(/size cap/);
   });
 });

@@ -58,6 +58,8 @@ export interface VerifiedConnection {
   /** The delegated session public key (d_sess) that signs data-plane requests. */
   delegatedKeyPub: string;
   canonicalHost: string;
+  /** The record's revocation status endpoint, pinned for data-plane re-checks. */
+  statusEndpoint: string | null;
 }
 
 export async function verifyProposal(
@@ -169,5 +171,11 @@ export async function verifyProposal(
     allowedMethods: record.methods,
   };
 
-  return { verification, delegation: del, delegatedKeyPub: del.sessionPublicKey, canonicalHost };
+  return {
+    verification,
+    delegation: del,
+    delegatedKeyPub: del.sessionPublicKey,
+    canonicalHost,
+    statusEndpoint: record.statusEndpoint ?? null,
+  };
 }

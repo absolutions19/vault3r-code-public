@@ -150,18 +150,32 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
     }
   };
 
+  const isDigit = (c: string | undefined): boolean => c !== undefined && c >= "0" && c <= "9";
+
   const parseNumber = (): number => {
+    // Enforce the RFC 8259 number grammar exactly, so we never diverge from a
+    // JSON.parse-based peer: no leading zeros, a digit required after '.', and a
+    // digit required in the exponent.  -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
     const start = i;
     if (text[i] === "-") i++;
-    while (i < n && text[i]! >= "0" && text[i]! <= "9") i++;
+    if (text[i] === "0") {
+      i++;
+    } else if (isDigit(text[i])) {
+      i++;
+      while (isDigit(text[i])) i++;
+    } else {
+      err("invalid number: expected a digit");
+    }
     if (text[i] === ".") {
       i++;
-      while (i < n && text[i]! >= "0" && text[i]! <= "9") i++;
+      if (!isDigit(text[i])) err("invalid number: a digit is required after '.'");
+      while (isDigit(text[i])) i++;
     }
     if (text[i] === "e" || text[i] === "E") {
       i++;
       if (text[i] === "+" || text[i] === "-") i++;
-      while (i < n && text[i]! >= "0" && text[i]! <= "9") i++;
+      if (!isDigit(text[i])) err("invalid number: a digit is required in the exponent");
+      while (isDigit(text[i])) i++;
     }
     const num = Number(text.slice(start, i));
     if (!Number.isFinite(num)) err("non-finite number");

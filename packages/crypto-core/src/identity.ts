@@ -28,8 +28,14 @@ function findKey(record: VaultIdentityRecord, kid: string): IdentityKey | undefi
   return record.keys.find((k) => k.kid === kid);
 }
 
+/**
+ * Whether a key may mint NEW authority (sign a fresh delegation or record proof).
+ * Only `active` keys qualify — `retired` keys may still verify historical
+ * signatures elsewhere, but must not authorize new sessions, and `revoked` keys
+ * are unusable entirely.
+ */
 function keyUsable(key: IdentityKey, now: number): boolean {
-  if (key.status === "revoked") return false;
+  if (key.status !== "active") return false;
   if (key.expires && Date.parse(key.expires) < now) return false;
   return true;
 }
