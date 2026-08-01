@@ -125,9 +125,14 @@ export function pointerRemove(doc: Json, pointer: string): Json {
  * even on adversarially deep input.
  */
 export function withinDepth(v: Json, maxDepth: number): boolean {
-  if (maxDepth < 0) return false;
-  if (Array.isArray(v)) return v.every((x) => withinDepth(x, maxDepth - 1));
-  if (isPlainObject(v)) return Object.values(v).every((x) => withinDepth(x as Json, maxDepth - 1));
+  const isContainer = Array.isArray(v) || isPlainObject(v);
+  if (isContainer) {
+    // This container consumes one level — count it BEFORE recursing, so an empty
+    // container at remaining budget 0 is over-depth (a bare value at depth 0 is ok).
+    if (maxDepth <= 0) return false;
+    const children = Array.isArray(v) ? v : (Object.values(v) as Json[]);
+    return children.every((x) => withinDepth(x, maxDepth - 1));
+  }
   return true;
 }
 

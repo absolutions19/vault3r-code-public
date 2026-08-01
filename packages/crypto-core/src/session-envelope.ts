@@ -14,6 +14,13 @@ import { toBase64Url, fromBase64Url, utf8ToBytes, bytesToUtf8, concatBytes } fro
 
 const VERSION_BYTE = 0x01;
 
+/** Length of the canonical (unpadded) base64url encoding of `n` bytes. */
+function base64UrlLen(n: number): number {
+  return n === 0 ? 0 : Math.floor(n / 3) * 4 + (n % 3 === 0 ? 0 : (n % 3) + 1);
+}
+/** The exact max encoded length for a frame within MAX_ENVELOPE_BYTES bytes. */
+const MAX_ENVELOPE_B64_LEN = base64UrlLen(MAX_ENVELOPE_BYTES);
+
 function aadBytes(aad: EnvelopeAad): Uint8Array {
   return canonicalBytes({
     topic: aad.topic,
@@ -36,13 +43,13 @@ export function sealEnvelope(sessionKey: Uint8Array, aad: EnvelopeAad, body: unk
 /** Decrypt a base64url payload. Returns the parsed body, or throws on failure. */
 export function openEnvelope<T = unknown>(sessionKey: Uint8Array, aad: EnvelopeAad, payload: string): T {
   // Reject oversized frames BEFORE base64-decoding or decrypting them, so a huge
-  // ciphertext can't force a large allocation + a full AEAD pass. base64 expands
-  // ~4/3, so cap the encoded length accordingly.
-  if (payload.length > Math.ceil((MAX_ENVELOPE_BYTES * 4) / 3) + 4) {
+  // ciphertext can't force a large allocation + a full AEAD pass. The threshold is
+  // the EXACT encoded length of MAX_ENVELOPE_BYTES, so a frame encoding even one
+  // extra byte is rejected here, not after decoding.
+  if (payload.length > MAX_ENVELOPE_B64_LEN) {
     throw new Error("envelope frame exceeds size cap");
   }
   const packed = fromBase64Url(payload);
-  if (packed.length > MAX_ENVELOPE_BYTES) throw new Error("envelope frame exceeds size cap");
   const headerLen = 1 + XCHACHA_NONCE_BYTES + XCHACHA_TAG_BYTES;
   if (packed.length < headerLen) throw new Error("envelope too short");
   if (packed[0] !== VERSION_BYTE) throw new Error("unsupported envelope version");

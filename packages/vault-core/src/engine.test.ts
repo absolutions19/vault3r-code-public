@@ -539,6 +539,18 @@ describe("VaultEngine — input hardening caps", () => {
     expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
   });
 
+  it("stored-doc depth boundary: exactly MAX_JSON_DEPTH accepted, +1 rejected", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const nestArr = (n: number): unknown => (n === 0 ? [] : [nestArr(n - 1)]);
+    // "/profile/deep" is 2 containers; a value of (MAX_JSON_DEPTH-2) nested arrays -> depth MAX.
+    const okVal = nestArr(32 - 2 - 1); // 29 nested arrays + innermost empty = 30 containers; +2 path = 32
+    const okR = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/deep", okVal));
+    expect("result" in okR).toBe(true);
+    const overVal = nestArr(32 - 2); // one deeper -> depth 33
+    const overR = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/deep2", overVal));
+    expect(failure(overR).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
   it("op-count boundary: MAX_PATCH_OPS accepted and +1 rejected, via BOTH set and patch", async () => {
     const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
     const entries = (n: number) => Array.from({ length: n }, (_, k) => ({ path: `/profile/k${k}`, value: k }));
@@ -662,6 +674,32 @@ describe("VaultEngine — key revocation", () => {
     const rWrite = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", 2));
     expect(failure(rRead).error.code).toBe(ErrorCode.Disconnected);
     expect(failure(rWrite).error.code).toBe(ErrorCode.Disconnected);
+  });
+
+  it("tears the session down on the data plane if revocation status can no longer be confirmed (fail closed)", async () => {
+    // A checker that confirms 'not revoked' at connect, then can't be reached.
+    let calls = 0;
+    const flaky = {
+      isRevoked: async () => {
+        if (calls++ === 0) return false; // connect
+        throw new Error("status endpoint unreachable"); // data plane
+      },
+    };
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation: flaky,
+      revocationRecheckMs: 0,
+      clock,
+    });
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const r = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/a"]));
+    expect(failure(r).error.code).toBe(ErrorCode.Disconnected);
+    // The session was torn down — a follow-up request has no session.
+    const r2 = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/a"]));
+    expect(failure(r2).error.code).toBe(ErrorCode.Disconnected);
   });
 
   it("refuses to extend a session whose key was revoked after connect", async () => {

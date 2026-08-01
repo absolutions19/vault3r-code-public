@@ -37,6 +37,19 @@ describe("json pointer", () => {
     expect(withinDepth({ a: 1, b: [1, 2] }, 2)).toBe(true);
   });
 
+  it("withinDepth: EXACTLY maxDepth nested EMPTY containers accepted, +1 rejected", () => {
+    const arr = (n: number): import("./json-pointer.js").Json => (n === 0 ? ([] as never) : [arr(n - 1)]);
+    const obj = (n: number): import("./json-pointer.js").Json => (n === 0 ? ({} as never) : { x: obj(n - 1) });
+    // n=8 makes 8 nested containers with an empty container at the bottom.
+    expect(withinDepth(arr(7), 8)).toBe(true); // 8 containers
+    expect(withinDepth(arr(8), 8)).toBe(false); // 9 containers
+    expect(withinDepth(obj(7), 8)).toBe(true);
+    expect(withinDepth(obj(8), 8)).toBe(false);
+    // A bare value is depth 0 and always fits.
+    expect(withinDepth(1, 0)).toBe(true);
+    expect(withinDepth([], 0)).toBe(false); // an empty container still consumes a level
+  });
+
   it("applies an RFC6902 patch with a test guard", () => {
     const doc = applyPatch({ n: 1 }, [
       { op: "test", path: "/n", value: 1 },
