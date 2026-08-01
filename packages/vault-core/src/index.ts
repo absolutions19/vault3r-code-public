@@ -7,3 +7,4 @@ export * from "./document-store.js";
 export * from "./identity-verify.js";
 export * from "./session.js";
 export * from "./engine.js";
+export * from "./node.js";

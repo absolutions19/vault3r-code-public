@@ -12,6 +12,7 @@
  */
 
 import type { Base64Url } from "./types.js";
+import { PROTOCOL_VERSION } from "./constants.js";
 
 /** Relay control + data frames (JSON over the relay WebSocket). */
 export type RelayFrame =
@@ -90,4 +91,29 @@ export interface SessionEnvelope {
   msgType: EnvelopeMsgType;
   /** JSON-RPC message (request/response/notification) as the body. */
   body: unknown;
+}
+
+/** Deterministic map from the relay tag to the envelope message type, so a
+ * receiver can rebuild the exact AAD without it being transmitted. */
+export function tagToMsgType(tag: RelayTag): EnvelopeMsgType {
+  switch (tag) {
+    case "pair":
+      return "handshake";
+    case "sub":
+      return "notification";
+    case "ping":
+      return "ack";
+    default:
+      return "rpc";
+  }
+}
+
+/** Build associated data for a session envelope (used identically by both peers). */
+export function makeAad(
+  topic: string,
+  tag: RelayTag,
+  msgType: EnvelopeMsgType,
+  dir: Direction,
+): EnvelopeAad {
+  return { topic, tag, pv: PROTOCOL_VERSION, msgType, dir };
 }

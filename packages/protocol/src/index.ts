@@ -6,3 +6,5 @@ export * from "./typed-data.js";
 export * from "./jsonrpc.js";
 export * from "./methods.js";
 export * from "./envelope.js";
+export * from "./pairing.js";
+export * from "./transport.js";

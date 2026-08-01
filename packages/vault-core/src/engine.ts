@@ -97,6 +97,11 @@ export class VaultEngine {
     this.emitter = fn;
   }
 
+  /** This vault's stable install id (used in typed-domain separation). */
+  vaultId(): string {
+    return this.keystore.vaultId();
+  }
+
   async unlock(): Promise<boolean> {
     return this.keystore.unlock({ reason: "unlock", prompt: "Unlock your vault" });
   }
