@@ -6,3 +6,4 @@ export * from "./session-envelope.js";
 export * from "./namespace.js";
 export * from "./identity.js";
 export * from "./signing.js";
+export * from "./value-hash.js";

@@ -105,3 +105,28 @@ export function makeDomain(vaultId: string, verifyingKeyId?: string): TypedDomai
   if (verifyingKeyId !== undefined) d.verifyingKeyId = verifyingKeyId;
   return d;
 }
+
+/** Fields the vault device key signs at settle; the SDK verifies the same bytes. */
+export interface SettleSignInput {
+  sessionId: string;
+  namespace: string;
+  grantId: string;
+  responderPublicKey: string;
+  vaultDeviceKey: string;
+  expiresAt: number;
+  methods: string[];
+}
+
+/** Deterministic signing preimage for a session settle (vault-authenticated). */
+export function settleSigningPreimage(input: SettleSignInput): Uint8Array {
+  return canonicalBytes({
+    tag: "vault-settle/v1",
+    sessionId: input.sessionId,
+    namespace: input.namespace,
+    grantId: input.grantId,
+    responderPublicKey: input.responderPublicKey,
+    vaultDeviceKey: input.vaultDeviceKey,
+    expiresAt: input.expiresAt,
+    methods: [...input.methods].sort(),
+  });
+}
