@@ -19,6 +19,19 @@ describe("json pointer", () => {
     const doc = pointerSet({}, "/a~1b/c~0d", 9); // key "a/b" then "c~d"
     expect(pointerGet(doc, "/a~1b/c~0d")).toBe(9);
   });
+
+  it("rejects prototype-polluting pointer tokens and never mutates Object.prototype", () => {
+    const before = Object.keys(Object.prototype).length;
+    for (const p of ["/__proto__/polluted", "/constructor/prototype/x", "/a/__proto__/y", "/prototype"]) {
+      expect(() => pointerSet({}, p, "evil"), p).toThrow();
+      expect(() => pointerGet({}, p), p).toThrow();
+      expect(() => pointerRemove({}, p), p).toThrow();
+    }
+    // Object.prototype is untouched, and no global pollution occurred.
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(({} as Record<string, unknown>)["x"]).toBeUndefined();
+    expect(Object.keys(Object.prototype).length).toBe(before);
+  });
   it("rejects an intermediate array index past the array end (no sparse-array blowup)", () => {
     let doc: import("./json-pointer.js").Json = {};
     doc = pointerSet(doc, "/arr", []);

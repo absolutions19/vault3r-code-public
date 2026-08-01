@@ -15,6 +15,9 @@ const MAX_TOKENS = 64;
 /** Parse a JSON Pointer into its reference tokens. */
 const utf8 = new TextEncoder();
 
+/** Tokens that could reach the prototype chain and cause prototype pollution. */
+const FORBIDDEN_TOKENS = new Set(["__proto__", "constructor", "prototype"]);
+
 export function parsePointer(pointer: string): string[] {
   if (typeof pointer !== "string") throw VaultError.of("FieldOutOfScope", "pointer must be a string");
   // Measured in UTF-8 bytes, consistent with the other byte-denominated caps.
@@ -27,7 +30,13 @@ export function parsePointer(pointer: string): string[] {
   if (parts.length > MAX_TOKENS) {
     throw VaultError.of("QuotaExceeded", "pointer too deep");
   }
-  return parts.map((p) => p.replace(/~1/g, "/").replace(/~0/g, "~"));
+  const tokens = parts.map((p) => p.replace(/~1/g, "/").replace(/~0/g, "~"));
+  // Reject prototype-polluting tokens so a path like /__proto__/x can never
+  // traverse to or mutate Object.prototype during a write.
+  for (const t of tokens) {
+    if (FORBIDDEN_TOKENS.has(t)) throw VaultError.of("FieldOutOfScope", `disallowed pointer token: ${t}`);
+  }
+  return tokens;
 }
 
 function isPlainObject(v: unknown): v is { [k: string]: Json } {
