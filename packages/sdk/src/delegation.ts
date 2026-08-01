@@ -83,7 +83,10 @@ interface ChallengeResponse {
 export class HttpDelegationSigner implements DelegationSigner {
   private readonly fetchImpl: typeof fetch;
   constructor(private readonly opts: HttpDelegationSignerOptions) {
-    this.fetchImpl = opts.fetchImpl ?? fetch;
+    // Bind to the global so calling it as `this.fetchImpl(...)` doesn't trip the
+    // browser's "Illegal invocation" (global fetch must run with window as `this`).
+    const base = opts.fetchImpl ?? fetch;
+    this.fetchImpl = base.bind(globalThis);
   }
 
   async getDelegation(req: DelegationRequest): Promise<SessionDelegation> {

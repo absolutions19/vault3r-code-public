@@ -1,9 +1,10 @@
-import { VaultClient, HttpDelegationSigner } from "./dist/vault-sdk.mjs";
+import { VaultClient, HttpDelegationSigner } from "@vault/sdk";
+import qrcode from "qrcode-generator";
 
-const $ = (id) => document.getElementById(id);
+const $ = (id: string) => document.getElementById(id)!;
 const logEl = $("log");
 
-function log(msg, cls = "info") {
+function log(msg: string, cls = "info") {
   // Build nodes with textContent — never innerHTML — so user-controlled values
   // (e.g. the name field) can't inject markup (XSS).
   const row = document.createElement("div");
@@ -19,11 +20,19 @@ function log(msg, cls = "info") {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-const cfg = await (await fetch("/config.json")).json();
-log(`loaded config — relay ${cfg.relayUrl}, app domain ${cfg.domain}`, "info");
+function renderQr(uri: string) {
+  const qr = qrcode(0, "L"); // type 0 = auto-size, error-correction L (max capacity)
+  qr.addData(uri);
+  qr.make();
+  (($("qr") as HTMLImageElement)).src = qr.createDataURL(4, 12);
+  $("qrWrap").style.display = "block";
+}
+
+const cfg = (await (await fetch("/config.json")).json()) as { relayUrl: string; domain: string };
+log(`loaded config — relay ${cfg.relayUrl}, app domain ${cfg.domain}`);
 
 $("connectBtn").addEventListener("click", async () => {
-  const btn = $("connectBtn");
+  const btn = $("connectBtn") as HTMLButtonElement;
   btn.disabled = true;
   try {
     const signer = new HttpDelegationSigner({
@@ -42,7 +51,8 @@ $("connectBtn").addEventListener("click", async () => {
       },
       onDisplayUri: async (uri) => {
         $("uri").textContent = uri;
-        log("pairing URI generated; posting to the (simulated) vault to scan…", "info");
+        renderQr(uri);
+        log("pairing URI generated; posting to the (simulated) vault to scan…");
         await fetch("/vault-sim/scan", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -52,7 +62,7 @@ $("connectBtn").addEventListener("click", async () => {
       },
     });
 
-    log("connecting… (delegation via backend PoP, then authenticated handshake)", "info");
+    log("connecting… (delegation via backend PoP, then authenticated handshake)");
     const res = await client.connect([
       { methods: ["vault_getData", "vault_setData", "vault_subscribe", "vault_revoke"], fields: [{ path: "/profile", read: true, write: true }] },
     ]);
@@ -67,24 +77,25 @@ $("connectBtn").addEventListener("click", async () => {
     await client.subscribe(["/profile"], (changes) => {
       log(`change notification: ${JSON.stringify(changes)}`, "note");
     });
-    log("subscribed to /profile", "info");
+    log("subscribed to /profile");
 
-    const name = $("name").value || "Ada Lovelace";
+    const name = ($("name") as HTMLInputElement).value || "Ada Lovelace";
     const version = await client.set("/profile/name", name);
     log(`wrote /profile/name = "${name}"  (version ${version})`, "ok");
 
     const values = await client.get("/profile/name");
     log(`read back /profile/name = ${JSON.stringify(values["/profile/name"])}`, "ok");
 
-    // Prove scope enforcement live: a field outside the grant is rejected.
     try {
       await client.get("/billing/card");
       log("unexpected: read of /billing/card succeeded", "err");
     } catch (e) {
-      log(`scope enforced — read of /billing/card rejected (${e.code ?? e.message})`, "note");
+      const err = e as { code?: number; message?: string };
+      log(`scope enforced — read of /billing/card rejected (${err.code ?? err.message})`, "note");
     }
-  } catch (err) {
-    log(`error: ${err?.message ?? err}`, "err");
+    btn.textContent = "Done — reload to run again";
+  } catch (e) {
+    log(`error: ${(e as Error)?.message ?? e}`, "err");
     btn.disabled = false;
   }
 });

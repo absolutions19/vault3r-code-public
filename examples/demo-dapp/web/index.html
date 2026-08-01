@@ -52,9 +52,13 @@
 
         <div class="card">
           <h2>2 · Pairing</h2>
+          <div id="qrWrap" style="display:none; text-align:center; margin-bottom:14px">
+            <img id="qr" alt="pairing QR code" style="width:200px; height:200px; image-rendering:pixelated; background:#fff; border-radius:10px; padding:8px" />
+            <div style="color:var(--muted); font-size:11px; margin-top:6px">a real vault scans this with its camera</div>
+          </div>
           <label>Number-match code (confirm on the vault)</label>
           <div class="challenge" id="challenge">— — — —</div>
-          <label style="margin-top:14px">Pairing URI (the QR a real vault scans)</label>
+          <label style="margin-top:14px">Pairing URI (encoded in the QR above)</label>
           <div class="uri" id="uri">generated on connect…</div>
         </div>
       </div>
@@ -62,6 +66,6 @@
       <div id="log"></div>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./dist/app.js"></script>
   </body>
 </html>
