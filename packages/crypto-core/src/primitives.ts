@@ -1,33 +1,24 @@
 /**
- * Thin, audited wrappers over Node's built-in crypto. Keeping every primitive
- * behind one module means there is a single place to review algorithm choices
- * and a single seam to swap in a native/RN provider later.
+ * Cryptographic primitives, backed by the audited @noble/* libraries. These are
+ * pure JavaScript and run identically in Node and the browser (and React Native),
+ * so the same crypto-core powers the vault engine, the SDK, and a browser build.
  *
- * Private keys are reconstructed from their raw 32-byte scalar/seed via the
- * fixed PKCS8 DER prefix for the curve — this needs only the private bytes (no
- * public component) and avoids brittle JWK round-tripping.
+ * The public surface is unchanged from the previous Node-crypto implementation;
+ * Ed25519 (RFC 8032) and X25519 (RFC 7748) are deterministic, so results are
+ * byte-identical across backends.
  */
 
-import {
-  createHash,
-  hkdfSync,
-  randomBytes as nodeRandomBytes,
-  generateKeyPairSync,
-  sign as nodeSign,
-  verify as nodeVerify,
-  diffieHellman,
-  createPublicKey,
-  createPrivateKey,
-  type KeyObject,
-} from "node:crypto";
-import { toBase64Url, fromBase64Url, fromHex, concatBytes } from "./encoding.js";
+import { ed25519, x25519 } from "@noble/curves/ed25519";
+import { sha256 as nobleSha256 } from "@noble/hashes/sha2";
+import { hkdf } from "@noble/hashes/hkdf";
+import { randomBytes as nobleRandomBytes } from "@noble/hashes/utils";
 
 export function randomBytes(n: number): Uint8Array {
-  return new Uint8Array(nodeRandomBytes(n));
+  return nobleRandomBytes(n);
 }
 
 export function sha256(data: Uint8Array): Uint8Array {
-  return new Uint8Array(createHash("sha256").update(data).digest());
+  return nobleSha256(data);
 }
 
 export function hkdfSha256(
@@ -36,12 +27,8 @@ export function hkdfSha256(
   info: Uint8Array,
   length: number,
 ): Uint8Array {
-  return new Uint8Array(hkdfSync("sha256", ikm, salt, info, length));
+  return hkdf(nobleSha256, ikm, salt, info, length);
 }
-
-// Fixed PKCS8 DER prefixes: SEQ { version, AlgId { OID }, OCTET STRING { OCTET STRING { key } } }
-const ED25519_PKCS8_PREFIX = fromHex("302e020100300506032b657004220420"); // OID 1.3.101.112
-const X25519_PKCS8_PREFIX = fromHex("302e020100300506032b656e04220420"); // OID 1.3.101.110
 
 export interface RawKeyPair {
   publicKey: Uint8Array; // 32 bytes
@@ -52,37 +39,19 @@ export interface RawKeyPair {
 // Ed25519 (identity + device signatures)
 // ---------------------------------------------------------------------------
 
-function ed25519PrivFromSeed(seed32: Uint8Array): KeyObject {
-  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
-  return createPrivateKey({
-    key: Buffer.from(concatBytes(ED25519_PKCS8_PREFIX, seed32)),
-    format: "der",
-    type: "pkcs8",
-  });
-}
-
-function ed25519PubFromRaw(raw32: Uint8Array): KeyObject {
-  return createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: toBase64Url(raw32) }, format: "jwk" });
-}
-
-function rawPubOf(priv: KeyObject): Uint8Array {
-  const jwk = createPublicKey(priv).export({ format: "jwk" }) as { x: string };
-  return fromBase64Url(jwk.x);
-}
-
 export function ed25519Generate(): RawKeyPair {
-  const { privateKey } = generateKeyPairSync("ed25519");
-  const jwkPriv = privateKey.export({ format: "jwk" }) as { d: string };
-  const seed = fromBase64Url(jwkPriv.d);
-  return { privateKey: seed, publicKey: rawPubOf(privateKey) };
+  const privateKey = ed25519.utils.randomPrivateKey();
+  return { privateKey, publicKey: ed25519.getPublicKey(privateKey) };
 }
 
 export function ed25519PublicFromSeed(seed32: Uint8Array): Uint8Array {
-  return rawPubOf(ed25519PrivFromSeed(seed32));
+  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
+  return ed25519.getPublicKey(seed32);
 }
 
 export function ed25519Sign(message: Uint8Array, seed32: Uint8Array): Uint8Array {
-  return new Uint8Array(nodeSign(null, message, ed25519PrivFromSeed(seed32)));
+  if (seed32.length !== 32) throw new Error("ed25519 seed must be 32 bytes");
+  return ed25519.sign(message, seed32);
 }
 
 export function ed25519Verify(
@@ -92,7 +61,7 @@ export function ed25519Verify(
 ): boolean {
   if (publicKey32.length !== 32 || signature.length !== 64) return false;
   try {
-    return nodeVerify(null, message, ed25519PubFromRaw(publicKey32), signature);
+    return ed25519.verify(signature, message, publicKey32);
   } catch {
     return false;
   }
@@ -102,33 +71,17 @@ export function ed25519Verify(
 // X25519 (transport key agreement)
 // ---------------------------------------------------------------------------
 
-function x25519PrivFromRaw(raw32: Uint8Array): KeyObject {
-  if (raw32.length !== 32) throw new Error("x25519 private must be 32 bytes");
-  return createPrivateKey({
-    key: Buffer.from(concatBytes(X25519_PKCS8_PREFIX, raw32)),
-    format: "der",
-    type: "pkcs8",
-  });
-}
-
-function x25519PubFromRaw(raw32: Uint8Array): KeyObject {
-  return createPublicKey({ key: { kty: "OKP", crv: "X25519", x: toBase64Url(raw32) }, format: "jwk" });
-}
-
 export function x25519Generate(): RawKeyPair {
-  const { privateKey } = generateKeyPairSync("x25519");
-  const jwkPriv = privateKey.export({ format: "jwk" }) as { d: string };
-  const raw = fromBase64Url(jwkPriv.d);
-  return { privateKey: raw, publicKey: rawPubOf(privateKey) };
+  const privateKey = x25519.utils.randomPrivateKey();
+  return { privateKey, publicKey: x25519.getPublicKey(privateKey) };
 }
 
 export function x25519PublicFromPrivate(private32: Uint8Array): Uint8Array {
-  return rawPubOf(x25519PrivFromRaw(private32));
+  if (private32.length !== 32) throw new Error("x25519 private must be 32 bytes");
+  return x25519.getPublicKey(private32);
 }
 
 /** Raw X25519 ECDH shared secret (32 bytes). */
 export function x25519SharedSecret(privateKey32: Uint8Array, peerPublicKey32: Uint8Array): Uint8Array {
-  return new Uint8Array(
-    diffieHellman({ privateKey: x25519PrivFromRaw(privateKey32), publicKey: x25519PubFromRaw(peerPublicKey32) }),
-  );
+  return x25519.getSharedSecret(privateKey32, peerPublicKey32);
 }

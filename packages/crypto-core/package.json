@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "VAULT cryptographic core: X25519/HKDF/XChaCha20-Poly1305 envelope, Ed25519 identity signing/verification, deterministic canonical encoding, and namespace derivation. Uses only Node's built-in crypto.",
+  "description": "VAULT cryptographic core: X25519/HKDF/XChaCha20-Poly1305 envelope, Ed25519 identity signing/verification, deterministic canonical encoding, and namespace derivation. Pure JS via @noble/* — runs in Node, the browser, and React Native.",
   "exports": {
     ".": "./src/index.ts"
   },
   "types": "./src/index.ts",
   "main": "./src/index.ts",
   "dependencies": {
+    "@noble/ciphers": "^1.2.0",
+    "@noble/curves": "^1.8.0",
+    "@noble/hashes": "^1.7.0",
     "@vault/protocol": "workspace:*",
     "tldts": "^6.1.71"
   }

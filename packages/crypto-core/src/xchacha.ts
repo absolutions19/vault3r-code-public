@@ -9,7 +9,7 @@
  * nonce of `00 00 00 00 || nonce[16:24]`.
  */
 
-import { createCipheriv, createDecipheriv } from "node:crypto";
+import { xchacha20poly1305 } from "@noble/ciphers/chacha";
 import { concatBytes } from "./encoding.js";
 
 const SIGMA = new Uint32Array([0x61707865, 0x3320646e, 0x79622d32, 0x6b206574]);
@@ -73,11 +73,6 @@ export const XCHACHA_NONCE_BYTES = 24;
 export const XCHACHA_TAG_BYTES = 16;
 export const XCHACHA_KEY_BYTES = 32;
 
-function ietfNonce(nonce24: Uint8Array): Uint8Array {
-  // 4 zero bytes || last 8 bytes of the 24-byte nonce
-  return concatBytes(new Uint8Array(4), nonce24.subarray(16, 24));
-}
-
 export interface SealedBox {
   nonce: Uint8Array; // 24 bytes
   ciphertext: Uint8Array;
@@ -93,11 +88,13 @@ export function xchachaSeal(
 ): SealedBox {
   if (key.length !== XCHACHA_KEY_BYTES) throw new Error("key must be 32 bytes");
   if (nonce24.length !== XCHACHA_NONCE_BYTES) throw new Error("nonce must be 24 bytes");
-  const subkey = hchacha20(key, nonce24.subarray(0, 16));
-  const cipher = createCipheriv("chacha20-poly1305", subkey, ietfNonce(nonce24), { authTagLength: 16 });
-  cipher.setAAD(aad, { plaintextLength: plaintext.length });
-  const ct = concatBytes(new Uint8Array(cipher.update(plaintext)), new Uint8Array(cipher.final()));
-  return { nonce: nonce24, ciphertext: ct, tag: new Uint8Array(cipher.getAuthTag()) };
+  const combined = xchacha20poly1305(key, nonce24, aad).encrypt(plaintext); // ciphertext || tag
+  const split = combined.length - XCHACHA_TAG_BYTES;
+  return {
+    nonce: nonce24,
+    ciphertext: combined.subarray(0, split),
+    tag: combined.subarray(split),
+  };
 }
 
 /** Decrypt; returns null on any authentication failure (never throws on bad tag). */
@@ -112,11 +109,7 @@ export function xchachaOpen(
   if (nonce24.length !== XCHACHA_NONCE_BYTES) throw new Error("nonce must be 24 bytes");
   if (tag.length !== XCHACHA_TAG_BYTES) return null;
   try {
-    const subkey = hchacha20(key, nonce24.subarray(0, 16));
-    const decipher = createDecipheriv("chacha20-poly1305", subkey, ietfNonce(nonce24), { authTagLength: 16 });
-    decipher.setAAD(aad, { plaintextLength: ciphertext.length });
-    decipher.setAuthTag(tag);
-    return concatBytes(new Uint8Array(decipher.update(ciphertext)), new Uint8Array(decipher.final()));
+    return xchacha20poly1305(key, nonce24, aad).decrypt(concatBytes(ciphertext, tag));
   } catch {
     return null;
   }

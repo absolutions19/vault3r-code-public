@@ -8,7 +8,7 @@
 
 import { canonicalBytes } from "@vault/protocol";
 import { hkdfSha256, sha256, x25519SharedSecret } from "./primitives.js";
-import { concatBytes, fromBase64Url, utf8ToBytes } from "./encoding.js";
+import { concatBytes, fromBase64Url, toHex, utf8ToBytes } from "./encoding.js";
 
 export interface HandshakeParams {
   proposerPublicKey: string; // base64url X25519 pub
@@ -27,7 +27,7 @@ export function transcriptHash(p: HandshakeParams): string {
     protocolVersion: p.protocolVersion,
     pairingNonce: p.pairingNonce,
   });
-  return `sha256:${Buffer.from(sha256(bytes)).toString("hex")}`;
+  return `sha256:${toHex(sha256(bytes))}`;
 }
 
 /**
