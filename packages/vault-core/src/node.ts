@@ -14,14 +14,13 @@ import {
   makeAad,
   makeSuccess,
   makeFailure,
-  makeNotification,
   tagToMsgType,
   parsePairingUri,
   isJsonRpcRequest,
   type JsonRpcRequest,
+  type JsonRpcNotification,
   type RelayTag,
   type SessionProposeParams,
-  type SubscriptionNotification,
   type Transport,
 } from "@vault/protocol";
 import {
@@ -137,10 +136,10 @@ export class VaultNode {
     }
   }
 
-  private emit(sessionId: string, note: SubscriptionNotification): void {
+  private emit(sessionId: string, notification: JsonRpcNotification): void {
     const active = this.byId.get(sessionId);
     if (!active) return;
-    const payload = sealEnvelope(active.sessionKey, makeAad(active.topic, "sub", "notification", "v2c"), makeNotification(Method.Subscription, note));
+    const payload = sealEnvelope(active.sessionKey, makeAad(active.topic, "sub", "notification", "v2c"), notification);
     void this.transport.publish(active.topic, payload, "sub");
   }
 

@@ -105,6 +105,16 @@ describe("VAULT end-to-end over the relay", () => {
     expect(values["/profile/name"]).toBe("Alice");
   });
 
+  it("extends the session over the wire (SDK → relay → vault)", async () => {
+    const app = makeApp("example.com", ALL_METHODS);
+    resolver.set(app.record);
+    const client = newClient(app);
+    const conn = await client.connect(fullScope());
+    const ext = await client.extendSession(60 * 60_000);
+    expect(ext.expiresAt).toBeGreaterThan(conn.grant.expiresAt - 1);
+    expect(typeof ext.atAbsoluteCap).toBe("boolean");
+  });
+
   it("delivers a live subscription notification on write", async () => {
     const app = makeApp("example.com", ALL_METHODS);
     resolver.set(app.record);

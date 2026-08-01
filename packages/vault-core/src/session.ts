@@ -18,6 +18,7 @@ export interface Session {
   proposerPublicKey: Base64Url;
   responderPublicKey: Base64Url;
   deviceKeyPub: Base64Url;
+  createdAt: number;
   expiresAt: number;
   writePolicy: WritePolicy;
   /** For "ask-once-per-session": set once the user has approved a write. */

@@ -13,8 +13,10 @@ import {
   VaultError,
   PROTOCOL_VERSION,
   SESSION_DEFAULT_TTL_MS,
+  SESSION_ABSOLUTE_MAX_TTL_MS,
   MAX_PATHS_PER_REQUEST,
   MAX_PATCH_OPS,
+  makeNotification,
   settleSigningPreimage,
   type SessionProposeParams,
   type SessionSettleResult,
@@ -30,12 +32,16 @@ import {
   type UnsubscribeResult,
   type RevokeParams,
   type RevokeResult,
+  type ExtendParams,
+  type ExtendResult,
   type GetPermissionsParams,
   type GetPermissionsResult,
-  type SubscriptionNotification,
+  type PermissionsChangedNotification,
+  type FieldRule,
   type Grant,
   type JsonRpcRequest,
   type JsonRpcResponse,
+  type JsonRpcNotification,
   makeSuccess,
   makeFailure,
 } from "@vault/protocol";
@@ -67,7 +73,8 @@ export interface ProposeContext {
   pairingNonce: string;
 }
 
-export type SubscriptionEmitter = (sessionId: string, notification: SubscriptionNotification) => void;
+/** Emits a JSON-RPC notification (subscription update or permissions_changed) to a session. */
+export type NotificationEmitter = (sessionId: string, notification: JsonRpcNotification) => void;
 
 export class VaultEngine {
   private readonly keystore: KeystoreAdapter;
@@ -80,7 +87,7 @@ export class VaultEngine {
   private readonly sessionTtlMs: number;
   private readonly randomId: () => string;
   private knownDomains: string[];
-  private emitter?: SubscriptionEmitter;
+  private emitter?: NotificationEmitter;
 
   constructor(config: VaultEngineConfig) {
     this.keystore = config.keystore;
@@ -93,7 +100,7 @@ export class VaultEngine {
     this.knownDomains = config.knownDomains ?? [];
   }
 
-  setEmitter(fn: SubscriptionEmitter): void {
+  setEmitter(fn: NotificationEmitter): void {
     this.emitter = fn;
   }
 
@@ -184,6 +191,7 @@ export class VaultEngine {
       proposerPublicKey: params.proposerPublicKey,
       responderPublicKey: ctx.responderPublicKey,
       deviceKeyPub,
+      createdAt: now,
       expiresAt,
       writePolicy,
       writeApprovedThisSession: false,
@@ -236,7 +244,14 @@ export class VaultEngine {
   private requireSession(sessionId: string): Session {
     const session = this.sessions.get(sessionId);
     if (!session) throw VaultError.of("Disconnected", "unknown session");
-    if (this.clock.now() > session.expiresAt) {
+    const now = this.clock.now();
+    // Absolute-lifetime ceiling: past it, a full reconnect + consent is required,
+    // regardless of how many times the session was extended.
+    if (now > session.createdAt + SESSION_ABSOLUTE_MAX_TTL_MS) {
+      this.sessions.delete(sessionId);
+      throw VaultError.of("Disconnected", "session reached its absolute lifetime cap");
+    }
+    if (now > session.expiresAt) {
       this.sessions.delete(sessionId);
       throw VaultError.of("Disconnected", "session expired");
     }
@@ -257,6 +272,8 @@ export class VaultEngine {
         return this.unsubscribe(session, req.params as UnsubscribeParams);
       case Method.Revoke:
         return this.revoke(session, req.params as RevokeParams);
+      case Method.SessionExtend:
+        return this.extendSession(session, req.params as ExtendParams);
       case Method.GetPermissions:
         return this.getPermissions(session, req.params as GetPermissionsParams);
       default:
@@ -411,7 +428,10 @@ export class VaultEngine {
           const got = pointerGet(doc, p);
           changes[p] = got === undefined ? null : got;
         }
-        this.emitter(session.id, { subscriptionId: sub.id, changes, version: versionToEtag(version) });
+        this.emitter(
+          session.id,
+          makeNotification(Method.Subscription, { subscriptionId: sub.id, changes, version: versionToEtag(version) }),
+        );
       }
     }
   }
@@ -438,6 +458,46 @@ export class VaultEngine {
     this.authorizeSigned(session, params, "VaultRevoke", Method.Revoke, { skipMethodCheck: true });
     this.sessions.delete(session.id);
     return { ok: true };
+  }
+
+  private async extendSession(session: Session, params: ExtendParams): Promise<ExtendResult> {
+    const msg = this.authorizeSigned(session, params, "VaultExtend", Method.SessionExtend, { skipMethodCheck: true });
+    const now = this.clock.now();
+    const cap = session.createdAt + SESSION_ABSOLUTE_MAX_TTL_MS;
+    if (now >= cap) {
+      this.sessions.delete(session.id);
+      throw VaultError.of("Disconnected", "session at absolute cap; reconnect required");
+    }
+    // Honoring an extension requires a fresh biometric.
+    const ok = await this.keystore.authenticate({ reason: "grant-change", prompt: "Extend session" });
+    if (!ok) throw VaultError.of("BiometricFailed");
+
+    const requested = Math.max(0, Number(msg["requestedTtlMs"]) || 0);
+    // Extend, never shorten: take the later of the current expiry and now+requested,
+    // clamped to the absolute cap.
+    session.expiresAt = Math.min(cap, Math.max(session.expiresAt, now + requested));
+    return { expiresAt: session.expiresAt, atAbsoluteCap: session.expiresAt >= cap };
+  }
+
+  /**
+   * User-initiated grant narrowing from the vault UI. Replaces the granted fields,
+   * tears down any subscription that is no longer in scope, and notifies the app
+   * with a permissions_changed event so it can't keep relying on stale access.
+   */
+  narrowGrant(sessionId: string, fields: FieldRule[]): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.grant.fields = fields;
+    const revokedSubscriptions: string[] = [];
+    for (const [subId, sub] of session.subscriptions) {
+      const stillReadable = sub.paths.some((p) => fieldAllows(fields, p, "read"));
+      if (!stillReadable) {
+        session.subscriptions.delete(subId);
+        revokedSubscriptions.push(subId);
+      }
+    }
+    const note: PermissionsChangedNotification = { sessionId, fields, revokedSubscriptions };
+    this.emitter?.(sessionId, makeNotification(Method.PermissionsChanged, note));
   }
 
   private async getPermissions(session: Session, _params: GetPermissionsParams): Promise<GetPermissionsResult> {

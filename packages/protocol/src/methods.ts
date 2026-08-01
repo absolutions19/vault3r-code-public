@@ -29,6 +29,7 @@ export const Method = {
   GetPermissions: "vault_getPermissions",
   RequestPermissions: "vault_requestPermissions",
   Revoke: "vault_revoke",
+  PermissionsChanged: "vault_permissionsChanged",
 } as const;
 
 export type MethodName = (typeof Method)[keyof typeof Method];
@@ -132,6 +133,21 @@ export interface RequestPermissionsResult {
 export interface RevokeParams extends SignedRequest<"VaultRevoke"> {}
 export interface RevokeResult {
   ok: true;
+}
+
+export interface ExtendParams extends SignedRequest<"VaultExtend"> {}
+export interface ExtendResult {
+  expiresAt: number;
+  /** True when the session has reached its absolute cap and cannot extend further. */
+  atAbsoluteCap: boolean;
+}
+
+/** Notification the vault pushes when a grant is narrowed/revoked mid-session. */
+export interface PermissionsChangedNotification {
+  sessionId: string;
+  fields: FieldRule[];
+  /** Subscription ids torn down because they are no longer in scope. */
+  revokedSubscriptions: string[];
 }
 
 // Re-export message aliases so the vault engine can name them succinctly.

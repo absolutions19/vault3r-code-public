@@ -71,6 +71,8 @@ export interface VaultClientConfig {
   onDisplayUri?: (uri: string) => void;
   /** Show the number-matching code the user confirms at the vault. */
   onPairingChallenge?: (code: string) => void;
+  /** Notified when the vault narrows/revokes this session's grant mid-session. */
+  onPermissionsChanged?: (change: { fields: unknown[]; revokedSubscriptions: string[] }) => void;
   requestTimeoutMs?: number;
   clock?: () => number;
 }
@@ -307,6 +309,17 @@ export class VaultClient {
     return res.subscriptionId;
   }
 
+  /** Request a session extension. Returns the new expiry (clamped to the vault's
+   *  absolute cap; the vault requires a fresh biometric to honor it). */
+  async extendSession(ttlMs: number): Promise<{ expiresAt: number; atAbsoluteCap: boolean }> {
+    const s = this.requireSession();
+    const signed = this.sign("VaultExtend", { requestedTtlMs: ttlMs });
+    return (await this.sendRequest(s.topic, s.key, makeRequest(this.nextId(), Method.SessionExtend, signed))) as {
+      expiresAt: number;
+      atAbsoluteCap: boolean;
+    };
+  }
+
   async disconnect(): Promise<void> {
     if (this.session) {
       const signed = this.sign("VaultRevoke", {});
@@ -395,6 +408,10 @@ export class VaultClient {
     } else if ("method" in msg && msg.method === Method.Subscription) {
       const note = msg.params as { subscriptionId: string; changes: Record<string, unknown>; version: string };
       this.subs.get(note.subscriptionId)?.(note.changes, note.version);
+    } else if ("method" in msg && msg.method === Method.PermissionsChanged) {
+      const note = msg.params as { fields: unknown[]; revokedSubscriptions: string[] };
+      for (const subId of note.revokedSubscriptions) this.subs.delete(subId);
+      this.config.onPermissionsChanged?.({ fields: note.fields, revokedSubscriptions: note.revokedSubscriptions });
     }
   }
 }

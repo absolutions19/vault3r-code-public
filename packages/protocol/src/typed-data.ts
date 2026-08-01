@@ -18,7 +18,7 @@ export interface TypedDomain {
   verifyingKeyId?: string;
 }
 
-export type PrimaryType = "VaultConnect" | "VaultRead" | "VaultWrite" | "VaultPatch" | "VaultRevoke";
+export type PrimaryType = "VaultConnect" | "VaultRead" | "VaultWrite" | "VaultPatch" | "VaultRevoke" | "VaultExtend";
 
 export interface TypedMessageBase {
   /** The namespace the caller *claims* — used only as an equality tripwire. */
@@ -66,6 +66,11 @@ export interface RevokeMessage extends TypedMessageBase {
   reason?: string;
 }
 
+export interface ExtendMessage extends TypedMessageBase {
+  /** Requested additional lifetime (ms), clamped to the absolute session cap. */
+  requestedTtlMs: number;
+}
+
 export type TypedMessageFor<P extends PrimaryType> = P extends "VaultConnect"
   ? ConnectMessage
   : P extends "VaultRead"
@@ -76,7 +81,9 @@ export type TypedMessageFor<P extends PrimaryType> = P extends "VaultConnect"
         ? PatchMessage
         : P extends "VaultRevoke"
           ? RevokeMessage
-          : never;
+          : P extends "VaultExtend"
+            ? ExtendMessage
+            : never;
 
 export interface TypedData<P extends PrimaryType = PrimaryType> {
   primaryType: P;

@@ -152,7 +152,7 @@ class TestClient {
     return { params, ctx: { responderPublicKey, pairingNonce: this.pairingNonce } };
   }
 
-  private signed<P extends "VaultRead" | "VaultWrite" | "VaultPatch" | "VaultRevoke">(
+  private signed<P extends "VaultRead" | "VaultWrite" | "VaultPatch" | "VaultRevoke" | "VaultExtend">(
     primaryType: P,
     sessionId: string,
     extra: Record<string, unknown>,
@@ -185,6 +185,10 @@ class TestClient {
 
   subscribe(sessionId: string, paths: string[]) {
     return makeRequest(this.nextNonce(), Method.Subscribe, this.signed("VaultRead", sessionId, { paths }));
+  }
+
+  extend(sessionId: string, requestedTtlMs: number) {
+    return makeRequest(this.nextNonce(), Method.SessionExtend, this.signed("VaultExtend", sessionId, { requestedTtlMs }));
   }
 }
 
@@ -345,6 +349,126 @@ describe("VaultEngine — anti-spoofing", () => {
     await expect(
       engine.connect(otherVaultClient.proposal().params, otherVaultClient.proposal().ctx),
     ).rejects.toMatchObject({ code: ErrorCode.BadSignature });
+  });
+});
+
+describe("VaultEngine — session extension caps", () => {
+  const SEVEN_DAYS = 7 * 24 * 60 * 60_000;
+  let resolver: StaticIdentityResolver;
+  let alice: TestClient;
+
+  beforeEach(() => {
+    resolver = new StaticIdentityResolver();
+    alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    resolver.set(alice.record);
+  });
+
+  it("extends within the absolute cap (biometric required, never shortens)", async () => {
+    const engine = newEngine(resolver);
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    // Default session TTL is 4h; request a longer 6h window → grows to now+6h.
+    const r = await engine.handleRequest(sessionId, alice.extend(sessionId, 6 * 60 * 60_000));
+    expect("result" in r).toBe(true);
+    const res = (r as { result: { expiresAt: number; atAbsoluteCap: boolean } }).result;
+    expect(res.expiresAt).toBe(FIXED_NOW + 6 * 60 * 60_000);
+    expect(res.atAbsoluteCap).toBe(false);
+
+    // A shorter request never reduces the expiry.
+    const r2 = await engine.handleRequest(sessionId, alice.extend(sessionId, 60 * 60_000));
+    expect((r2 as { result: { expiresAt: number } }).result.expiresAt).toBe(FIXED_NOW + 6 * 60 * 60_000);
+  });
+
+  it("clamps an over-long extension to the absolute cap", async () => {
+    const engine = newEngine(resolver);
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const r = await engine.handleRequest(sessionId, alice.extend(sessionId, 30 * 24 * 60 * 60_000)); // +30d
+    const res = (r as { result: { expiresAt: number; atAbsoluteCap: boolean } }).result;
+    expect(res.expiresAt).toBe(FIXED_NOW + SEVEN_DAYS); // clamped to createdAt + absolute cap
+    expect(res.atAbsoluteCap).toBe(true);
+  });
+
+  it("requires a fresh biometric to honor an extension", async () => {
+    const keystore = new InMemoryKeystore({ vaultId: "vault-under-test", authResponder: (req) => req.reason !== "grant-change" });
+    const engine = newEngine(resolver, keystore);
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const r = await engine.handleRequest(sessionId, alice.extend(sessionId, 60 * 60_000));
+    expect(failure(r).error.code).toBe(ErrorCode.BiometricFailed);
+  });
+
+  it("kills a session past its absolute lifetime cap", async () => {
+    let t = FIXED_NOW;
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      clock: { now: () => t },
+    });
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    t = FIXED_NOW + SEVEN_DAYS + 1; // jump past the absolute cap
+    const r = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/x"]));
+    expect(failure(r).error.code).toBe(ErrorCode.Disconnected);
+  });
+});
+
+describe("VaultEngine — subscription re-auth on grant change", () => {
+  let resolver: StaticIdentityResolver;
+  let engine: VaultEngine;
+  let alice: TestClient;
+
+  beforeEach(() => {
+    resolver = new StaticIdentityResolver();
+    engine = newEngine(resolver);
+    alice = new TestClient("example.com", "vault-under-test", [
+      { path: "/profile", read: true, write: true },
+      { path: "/other", read: true, write: true },
+    ]);
+    resolver.set(alice.record);
+  });
+
+  it("tears down out-of-scope subscriptions and emits permissions_changed when a grant is narrowed", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const notes: { method: string; params: unknown }[] = [];
+    engine.setEmitter((_sid, n) => notes.push({ method: n.method, params: n.params }));
+
+    await engine.handleRequest(sessionId, alice.subscribe(sessionId, ["/profile"]));
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/status", "online"));
+    expect(notes.filter((n) => n.method === "vault_subscription")).toHaveLength(1);
+
+    // Narrow the grant to drop /profile entirely.
+    engine.narrowGrant(sessionId, [{ path: "/other", read: true, write: true }]);
+    const changed = notes.find((n) => n.method === "vault_permissionsChanged");
+    expect(changed).toBeTruthy();
+    expect((changed!.params as { revokedSubscriptions: string[] }).revokedSubscriptions).toHaveLength(1);
+
+    // A further write to /profile must NOT emit (subscription is gone + out of scope).
+    const before = notes.length;
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/status", "away"));
+    // wait a tick in case of async emit
+    await Promise.resolve();
+    expect(notes.length).toBe(before);
+  });
+
+  it("re-authorizes every emit: a surviving subscription drops changes now out of scope", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const emitted: Record<string, unknown>[] = [];
+    engine.setEmitter((_sid, n) => {
+      if (n.method === "vault_subscription") emitted.push((n.params as { changes: Record<string, unknown> }).changes);
+    });
+    // Watch both areas.
+    await engine.handleRequest(sessionId, alice.subscribe(sessionId, ["/profile", "/other"]));
+    // Narrow: drop READ on /other (keep write) but keep /profile — the subscription survives.
+    engine.narrowGrant(sessionId, [
+      { path: "/profile", read: true, write: true },
+      { path: "/other", read: false, write: true },
+    ]);
+    // Write to /other — must NOT emit (read no longer granted).
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/other/x", 1));
+    expect(emitted).toHaveLength(0);
+    // Write to /profile — still emits.
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/y", 2));
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toHaveProperty("/profile/y", 2);
   });
 });
 
