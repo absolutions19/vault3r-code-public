@@ -23,6 +23,10 @@ import {
   fromBase64Url,
   concatBytes,
   utf8ToBytes,
+  createRecoveryBlob,
+  restoreDekFromRecovery,
+  serializeRecoveryBlob,
+  parseRecoveryBlob,
 } from "@vault/crypto-core";
 import * as LocalAuthentication from "expo-local-authentication";
 import { VaultKeystore, isNativeKeystoreAvailable } from "../../modules/vault-keystore";
@@ -31,7 +35,7 @@ import { VaultKeystore, isNativeKeystoreAvailable } from "../../modules/vault-ke
 declare const __DEV__: boolean;
 
 const PACK = 0x01;
-const SS = { dek: "vault.masterDek", device: "vault.deviceSeed", vaultId: "vault.vaultId" };
+const SS = { dek: "vault.masterDek", device: "vault.deviceSeed", vaultId: "vault.vaultId", recovery: "vault.recoveryBlob" };
 
 // --- native-boundary validation -------------------------------------------
 // Never trust a native return value. Decode strictly as base64url and enforce
@@ -194,6 +198,35 @@ export class RnKeystore implements KeystoreAdapter {
 
   vaultId(): string {
     return this.vaultIdStr;
+  }
+
+  // --- recovery (mnemonic wrap/unwrap of the DEK) ---------------------------
+  // On native, the wrapped blob is created/consumed inside the module and never
+  // crosses to JS. In the dev fallback we use the tested crypto-core recovery and
+  // keep the opaque blob in SecureStore.
+
+  async hasRecoveryBackup(): Promise<boolean> {
+    if (this.native) return (await VaultKeystore!.hasRecoveryBackup()) === true;
+    return (await SecureStore.getItemAsync(SS.recovery)) != null;
+  }
+
+  async createRecoveryBackup(mnemonic: string): Promise<boolean> {
+    if (this.native) return (await VaultKeystore!.createRecoveryBackup(mnemonic)) === true;
+    if (!this.masterDek) throw new KeystoreError("vault not provisioned");
+    const blob = serializeRecoveryBlob(createRecoveryBlob(this.masterDek, mnemonic));
+    await SecureStore.setItemAsync(SS.recovery, blob);
+    return true;
+  }
+
+  async restoreFromRecovery(mnemonic: string): Promise<boolean> {
+    if (this.native) return (await VaultKeystore!.restoreFromRecovery(mnemonic)) === true;
+    const stored = await SecureStore.getItemAsync(SS.recovery);
+    if (!stored) return false;
+    const dek = restoreDekFromRecovery(parseRecoveryBlob(stored), mnemonic);
+    if (!dek) return false;
+    this.masterDek = dek;
+    await SecureStore.setItemAsync(SS.dek, toBase64Url(dek));
+    return true;
   }
 
   private nsKey(storageKey: string): Uint8Array {
