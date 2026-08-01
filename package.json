@@ -16,7 +16,8 @@
     "relay": "tsx servers/relay/src/bin.ts",
     "demo:signer": "tsx examples/demo-dapp/server.ts",
     "bundle:web": "node examples/demo-dapp/web/build.mjs",
-    "demo": "pnpm run bundle:web && tsx examples/demo-dapp/demo-server.ts"
+    "demo": "pnpm run bundle:web && tsx examples/demo-dapp/demo-server.ts",
+    "gen:vectors": "tsx tools/gen-native-vectors.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

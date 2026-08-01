@@ -1,0 +1,133 @@
+{
+  "$schema": "vault-native-conformance/1",
+  "generatedBy": "@vault/crypto-core — regenerate with `pnpm gen:vectors`",
+  "encoding": "hex unless the field name ends _b64url (base64url, unpadded) or _utf8 (raw string)",
+  "warning": "Nonces/salts here are FIXED for reproducible KATs. Production must use fresh CSPRNG randomness.",
+  "sha256": {
+    "input_utf8": "abc",
+    "digest_hex": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  "ed25519": {
+    "note": "RFC 8032 Ed25519. seed = 32-byte private scalar seed.",
+    "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "publicKey_hex": "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664",
+    "message_utf8": "vault native conformance",
+    "signature_hex": "c1339397cb4a05fc2ecfae3e881b81afa8ef849d6afba36ee3881a079e7f12ab7c5956d94fa5efe4890c4d1d0988e3a9ee957e2bd4815f361c184e13c4991305"
+  },
+  "x25519": {
+    "note": "RFC 7748 X25519. Matches the RFC test vectors.",
+    "alicePriv_hex": "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+    "alicePub_hex": "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a",
+    "bobPriv_hex": "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+    "bobPub_hex": "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f",
+    "sharedSecret_hex": "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742"
+  },
+  "hkdfSha256": {
+    "note": "HKDF-SHA256 (extract+expand).",
+    "ikm_hex": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "salt_hex": "000102030405060708090a0b0c",
+    "info_utf8": "vault-hkdf-example",
+    "length": 32,
+    "okm_hex": "3172a8b5b950ef91adaec1425ddd667a4901ba4e0e4771742d5f1e5aeec8d839"
+  },
+  "hchacha20": {
+    "note": "HChaCha20 core. Used to build XChaCha20 from IETF ChaCha20-Poly1305.",
+    "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "nonce16_hex": "000000090000004a0000000031415927",
+    "subkey_hex": "82413b4227b27bfed30e42508a877d73a0f9e4d58a74a853c12ec41326d3ecdc"
+  },
+  "xchacha20poly1305": {
+    "note": "XChaCha20-Poly1305 (24-byte nonce). NOTE: iOS CryptoKit ChaChaPoly is the IETF 12-byte-nonce variant, NOT this — use libsodium crypto_aead_xchacha20poly1305 on iOS.",
+    "key_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+    "nonce24_hex": "404142434445464748494a4b4c4d4e4f5051525354555657",
+    "aad_utf8": "vault-doc/1|example",
+    "plaintext_utf8": "the vault is sealed",
+    "ciphertext_hex": "856416d42d9181368f321ea0d6ddf8345e2216",
+    "tag_hex": "3df8adb52b342e40715cb665eccab314"
+  },
+  "namespace": {
+    "note": "namespace = 'web:' + registrable-domain(host); storageKey = sha256(namespace) hex.",
+    "host": "app.example.com",
+    "granularity": "registrable-domain",
+    "namespace": "web:example.com",
+    "storageKey_hex": "300f3219834976cc3e3f28481f62dd4b428295c6421ad30b76a966d8fb1c4d70"
+  },
+  "namespaceSubkey": {
+    "note": "Per-namespace AEAD key. salt = sha256('vault-ns-salt|'+storageKey); info = 'vault-ns/v1|'+storageKey.",
+    "masterDek_hex": "d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1",
+    "storageKey_hex": "300f3219834976cc3e3f28481f62dd4b428295c6421ad30b76a966d8fb1c4d70",
+    "hkdfSalt_input_utf8": "vault-ns-salt|300f3219834976cc3e3f28481f62dd4b428295c6421ad30b76a966d8fb1c4d70",
+    "hkdfSalt_hex": "e263dfb76e932e5b171ce25ca1e8afa28aa001b2b7782b9afc5ba9ab67d3ff7e",
+    "hkdfInfo_utf8": "vault-ns/v1|300f3219834976cc3e3f28481f62dd4b428295c6421ad30b76a966d8fb1c4d70",
+    "subkey_hex": "bde7e9b42b8234ca474cb1aab634dc933a9c1be60271f24396102e5da2c07bf8"
+  },
+  "atRestBlob": {
+    "note": "Sealed namespace blob. AEAD key = the per-namespace subkey above; AAD = 'vault-doc/1|'+storageKey.",
+    "pack_layout": "0x01 (version) || nonce(24) || tag(16) || ciphertext(...)",
+    "subkey_hex": "bde7e9b42b8234ca474cb1aab634dc933a9c1be60271f24396102e5da2c07bf8",
+    "aad_utf8": "vault-doc/1|300f3219834976cc3e3f28481f62dd4b428295c6421ad30b76a966d8fb1c4d70",
+    "nonce24_hex": "101112131415161718191a1b1c1d1e1f2021222324252627",
+    "plaintext_utf8": "{\"v\":1,\"doc\":{\"profile\":{\"name\":\"Ada\"}}}",
+    "ciphertext_hex": "3fd49d1592c8df2d2c3937ffd59da28cc61ae56ef84b8e5b11bcc27e8e7a39c6708f21b8967d1978",
+    "tag_hex": "22229cc7c58988f18736fa70cbbdb42b",
+    "pack_hex": "01101112131415161718191a1b1c1d1e1f202122232425262722229cc7c58988f18736fa70cbbdb42b3fd49d1592c8df2d2c3937ffd59da28cc61ae56ef84b8e5b11bcc27e8e7a39c6708f21b8967d1978",
+    "pack_b64url": "ARAREhMUFRYXGBkaGxwdHh8gISIjJCUmJyIinMfFiYjxhzb6cMu9tCs_1J0VksjfLSw5N__VnaKMxhrlbvhLjlsRvMJ-jno5xnCPIbiWfRl4"
+  },
+  "signing": {
+    "note": "deviceSign(bytes) is raw Ed25519 over these preimages (deterministic canonical bytes).",
+    "settle": {
+      "input": {
+        "sessionId": "sess-1",
+        "namespace": "web:example.com",
+        "grantId": "grant-1",
+        "responderPublicKey": "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
+        "vaultDeviceKey": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+        "expiresAt": 1760000000000,
+        "methods": [
+          "vault_getData",
+          "vault_setData"
+        ]
+      },
+      "preimage_utf8": "{\"expiresAt\":1760000000000,\"grantId\":\"grant-1\",\"methods\":[\"vault_getData\",\"vault_setData\"],\"namespace\":\"web:example.com\",\"responderPublicKey\":\"hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo\",\"sessionId\":\"sess-1\",\"tag\":\"vault-settle/v1\",\"vaultDeviceKey\":\"ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ\"}",
+      "preimage_hex": "7b22657870697265734174223a313736303030303030303030302c226772616e744964223a226772616e742d31222c226d6574686f6473223a5b227661756c745f67657444617461222c227661756c745f73657444617461225d2c226e616d657370616365223a227765623a6578616d706c652e636f6d222c22726573706f6e6465725075626c69634b6579223a226853447743596b777031523069333363744437335767325f4f67306d4f427230363653706a717162546d6f222c2273657373696f6e4964223a22736573732d31222c22746167223a227661756c742d736574746c652f7631222c227661756c744465766963654b6579223a22656256574c6f5f6d56506c41654c4553364b6d4c703541666854726d6c623758344f4f52433630456c6d51227d",
+      "deviceSeed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "deviceSignature_hex": "f96db637819d82ed7bc552dba6cd407d40078d33968ecbe594cb6e63e8ef866d90d040e5cedc76c6c58688607ccf9c38012dae8cc10102a3d10661d8c22ed204"
+    },
+    "typedWrite": {
+      "primaryType": "VaultWrite",
+      "domainVersion": "1",
+      "preimage_utf8": "{\"domain\":{\"name\":\"Vault\",\"vaultId\":\"vault-1\",\"version\":\"1\"},\"message\":{\"changes\":[{\"op\":\"replace\",\"path\":\"/profile/name\",\"valueHash\":\"sha256:1b2c\"}],\"expiry\":1760000200000,\"issuedAt\":1760000000000,\"namespace\":\"web:example.com\",\"nonce\":\"n1\",\"sessionId\":\"sess-1\"},\"primaryType\":\"VaultWrite\",\"tag\":\"VAULT712\"}",
+      "preimage_hex": "7b22646f6d61696e223a7b226e616d65223a225661756c74222c227661756c744964223a227661756c742d31222c2276657273696f6e223a2231227d2c226d657373616765223a7b226368616e676573223a5b7b226f70223a227265706c616365222c2270617468223a222f70726f66696c652f6e616d65222c2276616c756548617368223a227368613235363a31623263227d5d2c22657870697279223a313736303030303230303030302c226973737565644174223a313736303030303030303030302c226e616d657370616365223a227765623a6578616d706c652e636f6d222c226e6f6e6365223a226e31222c2273657373696f6e4964223a22736573732d31227d2c227072696d61727954797065223a225661756c745772697465222c22746167223a225641554c54373132227d"
+    }
+  },
+  "recovery": {
+    "note": "K_recovery = Argon2id(mnemonic NFKD, salt, {t,m KiB,p}, dkLen=32). Wrap DEK with XChaCha20-Poly1305; AAD = canonical JSON of {tag,kdf,context,t,m,p,salt_b64url}.",
+    "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+    "context": "vault-1",
+    "params_note": "m is memory in KiB. These KAT params are FAST (8 MiB); production default is 64 MiB (t=3).",
+    "params": {
+      "t": 2,
+      "m": 8192,
+      "p": 1
+    },
+    "salt_hex": "00112233445566778899aabbccddeeff",
+    "recoveryKey_hex": "90ff51ba4475f344986aca418b5c8703c6e09403edac1aca80cee1d039f7d680",
+    "aad_utf8": "{\"context\":\"vault-1\",\"kdf\":\"argon2id\",\"m\":8192,\"p\":1,\"salt\":\"ABEiM0RVZneImaq7zN3u_w\",\"t\":2,\"tag\":\"vault-recovery/1\"}",
+    "dek_hex": "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+    "nonce24_hex": "aabbccddeeff00112233445566778899aabbccddeeff0011",
+    "wrappedCiphertext_hex": "6d2d5426eb5171c3e0470d290746b6591f3c7a65470a58fc30bda38d0685d4d7",
+    "wrappedTag_hex": "b16e07a766f13e2718538d21dd6ecbe9",
+    "blob_schema": {
+      "v": 1,
+      "kdf": "argon2id",
+      "context": "string",
+      "t": 0,
+      "m": 0,
+      "p": 0,
+      "salt": "b64url",
+      "nonce": "b64url",
+      "ct": "b64url",
+      "tag": "b64url"
+    }
+  }
+}
