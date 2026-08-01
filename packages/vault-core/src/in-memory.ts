@@ -26,6 +26,7 @@ import type {
   ConsentRequest,
   IdentityResolver,
   KeystoreAdapter,
+  RevocationChecker,
   StorageAdapter,
 } from "./adapters.js";
 
@@ -137,6 +138,18 @@ export class StaticIdentityResolver implements IdentityResolver {
   }
   async resolve(domain: string): Promise<VaultIdentityRecord | null> {
     return this.records.get(domain) ?? null;
+  }
+}
+
+/** In-memory revocation checker: a set of revoked `<statusEndpoint>|<kid>` keys. */
+export class StaticRevocationChecker implements RevocationChecker {
+  private readonly revoked = new Set<string>();
+
+  revoke(statusEndpoint: string, kid: string): void {
+    this.revoked.add(`${statusEndpoint}|${kid}`);
+  }
+  async isRevoked(statusEndpoint: string, kid: string): Promise<boolean> {
+    return this.revoked.has(`${statusEndpoint}|${kid}`);
   }
 }
 

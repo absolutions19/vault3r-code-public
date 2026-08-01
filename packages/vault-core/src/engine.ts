@@ -16,6 +16,7 @@ import {
   SESSION_ABSOLUTE_MAX_TTL_MS,
   MAX_PATHS_PER_REQUEST,
   MAX_PATCH_OPS,
+  MAX_NAMESPACE_BYTES,
   makeNotification,
   settleSigningPreimage,
   type SessionProposeParams,
@@ -46,9 +47,9 @@ import {
   makeFailure,
 } from "@vault/protocol";
 import type { ChangeDescriptor, TypedData } from "@vault/protocol";
-import { deriveNamespace, hashJsonValue, randomBytes, toBase64Url } from "@vault/crypto-core";
+import { deriveNamespace, hashJsonValue, randomBytes, toBase64Url, utf8ToBytes } from "@vault/crypto-core";
 import { verifyTyped } from "@vault/crypto-core";
-import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, StorageAdapter } from "./adapters.js";
+import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, RevocationChecker, StorageAdapter } from "./adapters.js";
 import { systemClock } from "./adapters.js";
 import { DocumentStore, versionToEtag, etagToVersion } from "./document-store.js";
 import { fieldAllows, intersectScopes, normalizeFields, pathIsSensitive } from "./grants.js";
@@ -62,6 +63,8 @@ export interface VaultEngineConfig {
   storage: StorageAdapter;
   resolver: IdentityResolver;
   consent: ConsentAdapter;
+  /** Optional short-TTL key-revocation checker (record.statusEndpoint). */
+  revocation?: RevocationChecker;
   clock?: Clock;
   knownDomains?: string[];
   sessionTtlMs?: number;
@@ -80,6 +83,7 @@ export class VaultEngine {
   private readonly keystore: KeystoreAdapter;
   private readonly resolver: IdentityResolver;
   private readonly consent: ConsentAdapter;
+  private readonly revocation: RevocationChecker | undefined;
   private readonly clock: Clock;
   private readonly docStore: DocumentStore;
   private readonly sessions = new SessionStore();
@@ -93,6 +97,7 @@ export class VaultEngine {
     this.keystore = config.keystore;
     this.resolver = config.resolver;
     this.consent = config.consent;
+    this.revocation = config.revocation;
     this.clock = config.clock ?? systemClock;
     this.docStore = new DocumentStore(config.keystore, config.storage);
     this.sessionTtlMs = config.sessionTtlMs ?? SESSION_DEFAULT_TTL_MS;
@@ -132,6 +137,7 @@ export class VaultEngine {
 
     const verified = await verifyProposal(params, {
       resolver: this.resolver,
+      ...(this.revocation ? { revocation: this.revocation } : {}),
       vaultId: this.keystore.vaultId(),
       responderPublicKey: ctx.responderPublicKey,
       pairingNonce: ctx.pairingNonce,
@@ -407,6 +413,11 @@ export class VaultEngine {
       }
       doc = pointerSet(doc, path, value);
       changedPaths.push(path);
+    }
+
+    // Per-namespace document quota (measured on the UTF-8 serialization).
+    if (utf8ToBytes(JSON.stringify(doc)).length > MAX_NAMESPACE_BYTES) {
+      throw VaultError.of("QuotaExceeded", "namespace document exceeds size cap");
     }
 
     const newVersion = loaded.version + 1;

@@ -36,10 +36,12 @@ import {
   type SessionDelegation,
 } from "@vault/protocol";
 import type { SessionProposeParams } from "@vault/protocol";
-import type { IdentityResolver } from "./adapters.js";
+import type { IdentityResolver, RevocationChecker } from "./adapters.js";
 
 export interface VerifyContext {
   resolver: IdentityResolver;
+  /** Optional short-TTL revocation check against the record's statusEndpoint. */
+  revocation?: RevocationChecker;
   vaultId: string;
   /** The vault's session ECDH public key for this pairing (transport-provided). */
   responderPublicKey: string;
@@ -88,6 +90,19 @@ export async function verifyProposal(
   // 3b. Protocol version compatibility.
   if (!record.protocolVersions.includes(PROTOCOL_VERSION)) {
     throw VaultError.of("ProtocolUnsupported", "identity record does not support this protocol version");
+  }
+
+  // 3c. Revocation: a short-TTL status endpoint can revoke a key faster than the
+  //     cacheable record expires. Checked before we trust the delegation's key.
+  if (ctx.revocation && record.statusEndpoint) {
+    let revoked = false;
+    try {
+      revoked = await ctx.revocation.isRevoked(record.statusEndpoint, params.delegation.keyId);
+    } catch {
+      // A checker that throws is treated as "cannot confirm"; fail closed on connect.
+      throw VaultError.of("IdentityUnverified", "revocation status could not be checked");
+    }
+    if (revoked) throw VaultError.of("IdentityUnverified", "identity key has been revoked");
   }
 
   // 4. Delegation: signed by an active record key, bound to this vault + pairing.

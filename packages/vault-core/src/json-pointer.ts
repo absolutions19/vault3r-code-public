@@ -6,7 +6,7 @@
  * `..`, no absolute filesystem-ish paths, no attempt to escape the namespace.
  */
 
-import { VaultError } from "@vault/protocol";
+import { VaultError, MAX_FIELD_PATH_LEN } from "@vault/protocol";
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -14,6 +14,8 @@ const MAX_TOKENS = 64;
 
 /** Parse a JSON Pointer into its reference tokens. */
 export function parsePointer(pointer: string): string[] {
+  if (typeof pointer !== "string") throw VaultError.of("FieldOutOfScope", "pointer must be a string");
+  if (pointer.length > MAX_FIELD_PATH_LEN) throw VaultError.of("QuotaExceeded", "pointer too long");
   if (pointer === "") return [];
   if (!pointer.startsWith("/")) {
     throw VaultError.of("FieldOutOfScope", `pointer must be empty or start with '/': ${pointer}`);

@@ -27,7 +27,7 @@ import {
   type JsonRpcFailure,
 } from "@vault/protocol";
 import { VaultEngine } from "./engine.js";
-import { InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent } from "./in-memory.js";
+import { InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent, StaticRevocationChecker } from "./in-memory.js";
 
 const FIXED_NOW = 1_760_000_000_000;
 const clock = { now: () => FIXED_NOW };
@@ -79,6 +79,7 @@ class TestClient {
             status: "active",
           },
         ],
+        statusEndpoint: `https://${domain}/.well-known/vault-status`,
         methods,
         protocolVersions: [PROTOCOL_VERSION],
       },
@@ -469,6 +470,88 @@ describe("VaultEngine — subscription re-auth on grant change", () => {
     await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/y", 2));
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toHaveProperty("/profile/y", 2);
+  });
+});
+
+describe("VaultEngine — input hardening caps", () => {
+  let resolver: StaticIdentityResolver;
+  let engine: VaultEngine;
+  let alice: TestClient;
+
+  beforeEach(() => {
+    resolver = new StaticIdentityResolver();
+    engine = newEngine(resolver);
+    alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    resolver.set(alice.record);
+  });
+
+  it("rejects an over-long JSON pointer (path length cap)", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const longPath = "/profile/" + "a".repeat(600); // > MAX_FIELD_PATH_LEN (512)
+    const r = await engine.handleRequest(sessionId, alice.getData(sessionId, [longPath]));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("rejects a write that would exceed the per-namespace document cap", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const big = "x".repeat(70 * 1024); // MAX_NAMESPACE_BYTES is 64 KiB
+    const r = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/blob", big));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+});
+
+describe("VaultEngine — key revocation", () => {
+  let resolver: StaticIdentityResolver;
+  let alice: TestClient;
+
+  beforeEach(() => {
+    resolver = new StaticIdentityResolver();
+    alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    resolver.set(alice.record);
+  });
+
+  it("connects normally when the key is not revoked", async () => {
+    const revocation = new StaticRevocationChecker();
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation,
+      clock,
+    });
+    const settle = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    expect(settle.granted.namespace).toBe("web:example.com");
+  });
+
+  it("rejects a connect when the identity key is revoked at the status endpoint", async () => {
+    const revocation = new StaticRevocationChecker();
+    revocation.revoke("https://example.com/.well-known/vault-status", "k1");
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation,
+      clock,
+    });
+    await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+    });
+  });
+
+  it("fails closed if the revocation checker throws", async () => {
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      revocation: { isRevoked: async () => { throw new Error("status endpoint unreachable"); } },
+      clock,
+    });
+    await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+    });
   });
 });
 

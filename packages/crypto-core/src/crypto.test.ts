@@ -172,4 +172,12 @@ describe("handshake + session envelope end to end", () => {
     expect(() => openEnvelope(k, { ...aad, topic: "t2" }, payload)).toThrow();
     expect(() => openEnvelope(k, { ...aad, dir: "v2c" }, payload)).toThrow();
   });
+
+  it("rejects an over-large decrypted plaintext (DoS cap)", () => {
+    const k = randomBytes(32);
+    const aad: EnvelopeAad = { topic: "t1", tag: "rpc", pv: "1", msgType: "rpc", dir: "c2v" };
+    // MAX_PLAINTEXT_BYTES is 128 KiB; a ~130 KB body must be rejected on open.
+    const payload = sealEnvelope(k, aad, { big: "x".repeat(130 * 1024) });
+    expect(() => openEnvelope(k, aad, payload)).toThrow(/size cap/);
+  });
 });

@@ -6,7 +6,7 @@
  */
 
 import { WebSocketServer, WebSocket, type RawData } from "ws";
-import { MAX_ENVELOPE_BYTES, type RelayFrame } from "@vault/protocol";
+import { MAX_ENVELOPE_BYTES, parseJsonStrict, type RelayFrame } from "@vault/protocol";
 import { TopicMailbox } from "./mailbox.js";
 
 export interface RelayServerOptions {
@@ -76,7 +76,7 @@ export class RelayServer {
     try {
       const text = typeof data === "string" ? data : data.toString("utf8");
       if (text.length > this.maxPayload) return this.sendError(ws, undefined, 4330, "frame too large");
-      frame = JSON.parse(text) as RelayFrame;
+      frame = parseJsonStrict(text, { maxDepth: 8 }) as RelayFrame;
     } catch {
       return this.sendError(ws, undefined, 4010, "invalid frame");
     }

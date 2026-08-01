@@ -7,7 +7,7 @@
  *   0x01 | nonce(24) | tag(16) | ciphertext(...)
  */
 
-import { canonicalBytes, type EnvelopeAad } from "@vault/protocol";
+import { canonicalBytes, parseJsonStrict, MAX_PLAINTEXT_BYTES, type EnvelopeAad } from "@vault/protocol";
 import { xchachaSeal, xchachaOpen, XCHACHA_NONCE_BYTES, XCHACHA_TAG_BYTES } from "./xchacha.js";
 import { randomBytes } from "./primitives.js";
 import { toBase64Url, fromBase64Url, utf8ToBytes, bytesToUtf8, concatBytes } from "./encoding.js";
@@ -44,5 +44,9 @@ export function openEnvelope<T = unknown>(sessionKey: Uint8Array, aad: EnvelopeA
   const ct = packed.subarray(headerLen);
   const pt = xchachaOpen(sessionKey, nonce, ct, tag, aadBytes(aad));
   if (pt === null) throw new Error("envelope authentication failed");
-  return JSON.parse(bytesToUtf8(pt)) as T;
+  // Enforce the plaintext size cap BEFORE parsing, and use the strict parser
+  // (bounded depth + duplicate-key rejection) so the peer can't hand us an
+  // ambiguous or stack-exhausting message.
+  if (pt.length > MAX_PLAINTEXT_BYTES) throw new Error("envelope plaintext exceeds size cap");
+  return parseJsonStrict(bytesToUtf8(pt)) as T;
 }

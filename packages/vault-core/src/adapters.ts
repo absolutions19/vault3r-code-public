@@ -70,6 +70,17 @@ export interface IdentityResolver {
   resolve(domain: string): Promise<import("@vault/protocol").VaultIdentityRecord | null>;
 }
 
+/**
+ * Checks a domain's short-TTL revocation status endpoint. Separate from the
+ * cacheable identity record so a compromised key can be revoked faster than the
+ * record's cache expires. On device this is an HTTPS GET; returns true if the key
+ * is revoked. A checker that cannot reach the endpoint should fail SAFE for
+ * high-value operations per policy; here `resolveError` decides that.
+ */
+export interface RevocationChecker {
+  isRevoked(statusEndpoint: string, kid: string): Promise<boolean>;
+}
+
 /** The connection/permission decision surface (the consent UI). */
 export interface ConsentDecision {
   approved: boolean;
