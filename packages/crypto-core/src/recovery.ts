@@ -139,10 +139,16 @@ export function restoreDekFromRecovery(
     const nonce = fromBase64Url(blob.nonce);
     const ct = fromBase64Url(blob.ct);
     const tag = fromBase64Url(blob.tag);
-    if (salt.length < 8 || salt.length > 64 || nonce.length !== 24 || tag.length !== 16) return null;
+    // XChaCha20-Poly1305 is a stream cipher, so a wrapped 32-byte DEK has exactly
+    // 32 bytes of ciphertext. Reject anything else before doing KDF/AEAD work.
+    if (salt.length < 8 || salt.length > 64 || nonce.length !== 24 || tag.length !== 16 || ct.length !== DEK_BYTES) {
+      return null;
+    }
 
     const key = deriveRecoveryKey(mnemonic, salt, { t: blob.t, m: blob.m, p: blob.p });
-    return xchachaOpen(key, nonce, ct, tag, recoveryAad(blob.context, blob.t, blob.m, blob.p, salt));
+    const pt = xchachaOpen(key, nonce, ct, tag, recoveryAad(blob.context, blob.t, blob.m, blob.p, salt));
+    // Belt-and-suspenders: the authenticated plaintext must be exactly a DEK.
+    return pt && pt.length === DEK_BYTES ? pt : null;
   } catch {
     return null;
   }

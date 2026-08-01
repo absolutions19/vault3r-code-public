@@ -79,6 +79,9 @@ describe("DEK wrap / unwrap via Argon2id", () => {
     // Out-of-range KDF params.
     expect(restoreDekFromRecovery({ ...blob, m: 1 }, mnemonic, CTX)).toBeNull();
     expect(restoreDekFromRecovery({ ...blob, t: 0 }, mnemonic, CTX)).toBeNull();
+    // Wrong ciphertext length (a wrapped DEK is exactly 32 bytes).
+    expect(restoreDekFromRecovery({ ...blob, ct: toBase64Url(randomBytes(16)) }, mnemonic, CTX)).toBeNull();
+    expect(restoreDekFromRecovery({ ...blob, ct: toBase64Url(randomBytes(64)) }, mnemonic, CTX)).toBeNull();
     // Bogus structural fields.
     expect(restoreDekFromRecovery({ ...blob, v: 2 as unknown as 1 }, mnemonic, CTX)).toBeNull();
   });

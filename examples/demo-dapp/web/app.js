@@ -58,7 +58,10 @@ $("connectBtn").addEventListener("click", async () => {
     ]);
     $("connDot").classList.add("on");
     $("connText").textContent = "connected";
-    $("nsRow").innerHTML = `<span class="pill">${res.namespace}</span>`;
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = res.namespace;
+    $("nsRow").replaceChildren(pill);
     log(`connected — granted namespace ${res.namespace}`, "ok");
 
     await client.subscribe(["/profile"], (changes) => {
