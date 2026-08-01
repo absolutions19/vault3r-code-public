@@ -33,6 +33,39 @@ declare const __DEV__: boolean;
 const PACK = 0x01;
 const SS = { dek: "vault.masterDek", device: "vault.deviceSeed", vaultId: "vault.vaultId" };
 
+// --- native-boundary validation -------------------------------------------
+// Never trust a native return value. Decode strictly as base64url and enforce
+// expected lengths; a validation failure is a keystore failure (fail closed).
+
+class KeystoreError extends Error {}
+
+function decodeNative(value: string, name: string): Uint8Array {
+  try {
+    return fromBase64Url(value); // throws on non-base64url alphabet
+  } catch {
+    throw new KeystoreError(`native keystore returned invalid base64url for ${name}`);
+  }
+}
+
+/** Validate a native base64url return; optionally assert exact decoded length. */
+function requireNativeB64u(value: unknown, name: string, expectedLen?: number): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new KeystoreError(`native keystore returned an empty/non-string ${name}`);
+  }
+  const bytes = decodeNative(value, name);
+  if (expectedLen !== undefined && bytes.length !== expectedLen) {
+    throw new KeystoreError(`native keystore returned ${bytes.length}-byte ${name}, expected ${expectedLen}`);
+  }
+  return value;
+}
+
+function requireNativeBytes(value: unknown, name: string): Uint8Array {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new KeystoreError(`native keystore returned an empty/non-string ${name}`);
+  }
+  return decodeNative(value, name);
+}
+
 export class RnKeystore implements KeystoreAdapter {
   private native: boolean;
   private unlocked = false;
@@ -60,12 +93,15 @@ export class RnKeystore implements KeystoreAdapter {
       const has = await SecureStore.getItemAsync(SS.vaultId);
       if (!has) {
         const prov = await VaultKeystore!.provision();
+        if (typeof prov.vaultId !== "string" || prov.vaultId.length === 0) {
+          throw new KeystoreError("native keystore returned an empty vaultId");
+        }
+        ks.deviceKeyPubB64 = requireNativeB64u(prov.deviceKeyPublic, "device public key", 32);
         await SecureStore.setItemAsync(SS.vaultId, prov.vaultId);
         ks.vaultIdStr = prov.vaultId;
-        ks.deviceKeyPubB64 = prov.deviceKeyPublic;
       } else {
         ks.vaultIdStr = has;
-        ks.deviceKeyPubB64 = await VaultKeystore!.deviceKeyPublic();
+        ks.deviceKeyPubB64 = requireNativeB64u(await VaultKeystore!.deviceKeyPublic(), "device public key", 32);
       }
     } else {
       await ks.initJsFallback();
@@ -126,7 +162,7 @@ export class RnKeystore implements KeystoreAdapter {
   async sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {
     if (this.native) {
       const ct = await VaultKeystore!.seal(storageKey, toBase64Url(aad), toBase64Url(plaintext));
-      return fromBase64Url(ct);
+      return requireNativeBytes(ct, "sealed blob");
     }
     const key = this.nsKey(storageKey);
     const nonce = randomBytes(24);
@@ -137,7 +173,7 @@ export class RnKeystore implements KeystoreAdapter {
   async openNamespace(storageKey: string, aad: Uint8Array, blob: Uint8Array): Promise<Uint8Array | null> {
     if (this.native) {
       const pt = await VaultKeystore!.open(storageKey, toBase64Url(aad), toBase64Url(blob));
-      return pt == null ? null : fromBase64Url(pt);
+      return pt == null ? null : requireNativeBytes(pt, "opened blob");
     }
     if (blob.length < 41 || blob[0] !== PACK) return null;
     const key = this.nsKey(storageKey);
@@ -149,7 +185,9 @@ export class RnKeystore implements KeystoreAdapter {
   }
 
   async signDevice(bytes: Uint8Array): Promise<string> {
-    if (this.native) return VaultKeystore!.deviceSign(toBase64Url(bytes));
+    if (this.native) {
+      return requireNativeB64u(await VaultKeystore!.deviceSign(toBase64Url(bytes)), "device signature", 64);
+    }
     return toBase64Url(ed25519Sign(bytes, this.deviceSeed!));
   }
 

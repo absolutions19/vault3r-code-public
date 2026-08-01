@@ -28,7 +28,11 @@ class VaultKeystoreModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("VaultKeystore")
 
-    Function("isAvailable") { true }
+    // FAIL CLOSED: this module is a reference scaffold. It reports unavailable so
+    // the JS side either uses the dev-only fallback (dev builds) or aborts
+    // (release builds) — it never trusts placeholder key material. Flip
+    // `isAvailable` to true ONLY once every operation below is fully implemented.
+    Function("isAvailable") { false }
 
     AsyncFunction("hasHardwareBackedKeys") { hasStrongBoxOrTee() }
 
@@ -40,55 +44,44 @@ class VaultKeystoreModule : Module() {
       }
     }
 
-    AsyncFunction("provision") {
-      val spec = KeyGenParameterSpec.Builder(
-        KEK_ALIAS,
-        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-      )
-        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-        .setUserAuthenticationRequired(true)
-        .setInvalidatedByBiometricEnrollment(true)
-        .apply { if (hasStrongBox()) setIsStrongBoxBacked(true) }
-        .build()
-      val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-      kg.init(spec)
-      kg.generateKey() // KEK lives in the keystore, never exported
-
-      // Random DEK, wrapped by the KEK (AES-GCM). Held in native memory while unlocked.
-      // deviceKey: Ed25519 for response signing (via a vetted provider).
-      mapOf(
-        "wrappedDek" to "<base64 wrapped DEK>",
-        "deviceKeyPublic" to "<base64url device pubkey>",
-        "vaultId" to java.util.UUID.randomUUID().toString()
-      )
-    }
-
-    AsyncFunction("unlock") { reason: String ->
-      // Show BiometricPrompt with a CryptoObject bound to the KEK cipher; on
-      // success, unwrap the DEK into sessionDek. (BiometricPrompt runs on the UI
-      // thread via the current Activity.)
-      promptBiometricAndUnwrap(reason)
-    }
-
+    AsyncFunction("provision") { failNotImplemented("provision") }
+    AsyncFunction("unlock") { reason: String -> failNotImplemented("unlock") }
     AsyncFunction("lock") { sessionDek?.fill(0); sessionDek = null }
     AsyncFunction("isUnlocked") { sessionDek != null }
-    AsyncFunction("authenticate") { reason: String -> promptBiometric(reason) }
+    AsyncFunction("authenticate") { reason: String -> failNotImplemented("authenticate") }
+    AsyncFunction("seal") { storageKey: String, aadB64: String, plaintextB64: String -> failNotImplemented("seal") }
+    AsyncFunction("open") { storageKey: String, aadB64: String, blobB64: String -> failNotImplemented("open") }
+    AsyncFunction("deviceSign") { bytesB64: String -> failNotImplemented("deviceSign") }
+    AsyncFunction("deviceKeyPublic") { failNotImplemented("deviceKeyPublic") }
+    AsyncFunction("exportRecoveryWrappedDek") { mnemonic: String -> failNotImplemented("exportRecoveryWrappedDek") }
+    AsyncFunction("importRecoveryWrappedDek") { mnemonic: String, wrapped: String -> failNotImplemented("importRecoveryWrappedDek") }
+  }
 
-    AsyncFunction("seal") { storageKey: String, aadB64: String, plaintextB64: String ->
-      // HKDF(sessionDek, storageKey) → subkey; XChaCha20-Poly1305 seal.
-      "<base64 ciphertext>"
-    }
-    AsyncFunction("open") { storageKey: String, aadB64: String, blobB64: String ->
-      // HKDF subkey; XChaCha20-Poly1305 open; return null on auth failure.
-      null as String?
-    }
+  private fun failNotImplemented(op: String): Nothing =
+    throw NotImplementedError("VaultKeystore.$op is not yet implemented; module reports isAvailable=false")
 
-    AsyncFunction("deviceSign") { bytesB64: String -> "<base64url signature>" }
-    AsyncFunction("deviceKeyPublic") { "<base64url device pubkey>" }
-
-    AsyncFunction("exportRecoveryWrappedDek") { mnemonic: String -> "<argon2id-wrapped DEK>" }
-    AsyncFunction("importRecoveryWrappedDek") { mnemonic: String, wrapped: String -> false }
+  /**
+   * Real implementation sketch (kept for reference; wire up before enabling):
+   *  - KEK: AndroidKeyStore AES key, setUserAuthenticationRequired(true),
+   *    setInvalidatedByBiometricEnrollment(true), setIsStrongBoxBacked when available.
+   *  - unlock: BiometricPrompt + CryptoObject(cipher) → unwrap DEK into sessionDek.
+   *  - seal/open: HKDF(sessionDek, storageKey) → XChaCha20-Poly1305 (vetted provider).
+   *  - deviceSign: Ed25519 over the given bytes.
+   */
+  private fun provisionKek() {
+    val spec = KeyGenParameterSpec.Builder(
+      KEK_ALIAS,
+      KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+    )
+      .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+      .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+      .setUserAuthenticationRequired(true)
+      .setInvalidatedByBiometricEnrollment(true)
+      .apply { if (hasStrongBox()) setIsStrongBoxBacked(true) }
+      .build()
+    val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    kg.init(spec)
+    kg.generateKey()
   }
 
   private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

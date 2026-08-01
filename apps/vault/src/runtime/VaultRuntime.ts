@@ -41,7 +41,10 @@ export class VaultRuntime {
 
   /** Scan/handle a pairing URI (from the camera or a Universal Link). */
   async pair(uri: string): Promise<void> {
-    if (!this.keystore.isUnlocked()) await this.keystore.unlock({ reason: "unlock", prompt: "Unlock to connect" });
+    if (!this.keystore.isUnlocked()) {
+      const unlocked = await this.keystore.unlock({ reason: "unlock", prompt: "Unlock to connect" });
+      if (!unlocked) throw new Error("Vault must be unlocked to connect an app");
+    }
     await this.node.pair(uri);
   }
 }

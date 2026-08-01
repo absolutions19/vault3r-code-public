@@ -24,8 +24,12 @@ public class VaultKeystoreModule: Module {
   public func definition() -> ModuleDefinition {
     Name("VaultKeystore")
 
+    // FAIL CLOSED: report unavailable until the KEK unwrap + Keychain persistence
+    // paths below are fully implemented, so the JS side never trusts a
+    // half-provisioned enclave (it uses the dev fallback in dev, or aborts in a
+    // release build). Flip to `SecureEnclave.isAvailable` once complete.
     Function("isAvailable") { () -> Bool in
-      return SecureEnclave.isAvailable
+      return false
     }
 
     AsyncFunction("hasHardwareBackedKeys") { () -> Bool in
