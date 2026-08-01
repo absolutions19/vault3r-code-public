@@ -1,0 +1,27 @@
+{
+  "name": "vault3r",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "VAULT — a mobile, biometric-encrypted data vault with a crypto-wallet-style permission protocol. Monorepo.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm run typecheck && pnpm run test",
+    "e2e": "vitest run tests/e2e",
+    "relay": "tsx servers/relay/src/bin.ts",
+    "demo:signer": "tsx examples/demo-dapp/server.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  },
+  "packageManager": "pnpm@9.15.9"
+}

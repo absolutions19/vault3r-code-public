@@ -1,0 +1,16 @@
+{
+  "name": "@vault/crypto-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "VAULT cryptographic core: X25519/HKDF/XChaCha20-Poly1305 envelope, Ed25519 identity signing/verification, deterministic canonical encoding, and namespace derivation. Uses only Node's built-in crypto.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@vault/protocol": "workspace:*",
+    "tldts": "^6.1.71"
+  }
+}

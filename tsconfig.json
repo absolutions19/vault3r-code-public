@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@vault/protocol": ["packages/protocol/src/index.ts"],
+      "@vault/crypto-core": ["packages/crypto-core/src/index.ts"],
+      "@vault/vault-core": ["packages/vault-core/src/index.ts"],
+      "@vault/sdk": ["packages/sdk/src/index.ts"],
+      "@vault/relay": ["servers/relay/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "servers/*/src/**/*.ts",
+    "examples/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["**/dist/**", "**/node_modules/**", "apps/**"]
+}

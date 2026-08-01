@@ -1,0 +1,24 @@
+{
+  "name": "@vault/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "VAULT client SDK for target applications: EIP-1193-shaped provider, pairing, delegated request signing, and get/set/patch/subscribe over the relay.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@vault/protocol": "workspace:*",
+    "@vault/crypto-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  }
+}
