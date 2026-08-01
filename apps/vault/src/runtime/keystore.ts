@@ -213,7 +213,7 @@ export class RnKeystore implements KeystoreAdapter {
   async createRecoveryBackup(mnemonic: string): Promise<boolean> {
     if (this.native) return (await VaultKeystore!.createRecoveryBackup(mnemonic)) === true;
     if (!this.masterDek) throw new KeystoreError("vault not provisioned");
-    const blob = serializeRecoveryBlob(createRecoveryBlob(this.masterDek, mnemonic));
+    const blob = serializeRecoveryBlob(createRecoveryBlob(this.masterDek, mnemonic, this.vaultIdStr));
     await SecureStore.setItemAsync(SS.recovery, blob);
     return true;
   }
@@ -222,7 +222,12 @@ export class RnKeystore implements KeystoreAdapter {
     if (this.native) return (await VaultKeystore!.restoreFromRecovery(mnemonic)) === true;
     const stored = await SecureStore.getItemAsync(SS.recovery);
     if (!stored) return false;
-    const dek = restoreDekFromRecovery(parseRecoveryBlob(stored), mnemonic);
+    let dek: Uint8Array | null = null;
+    try {
+      dek = restoreDekFromRecovery(parseRecoveryBlob(stored), mnemonic, this.vaultIdStr);
+    } catch {
+      dek = null;
+    }
     if (!dek) return false;
     this.masterDek = dek;
     await SecureStore.setItemAsync(SS.dek, toBase64Url(dek));

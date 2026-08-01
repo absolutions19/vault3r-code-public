@@ -4,10 +4,17 @@ const $ = (id) => document.getElementById(id);
 const logEl = $("log");
 
 function log(msg, cls = "info") {
-  const time = new Date().toLocaleTimeString();
+  // Build nodes with textContent — never innerHTML — so user-controlled values
+  // (e.g. the name field) can't inject markup (XSS).
   const row = document.createElement("div");
   row.className = "row";
-  row.innerHTML = `<span class="t">${time}</span> <span class="${cls}">${msg}</span>`;
+  const time = document.createElement("span");
+  time.className = "t";
+  time.textContent = new Date().toLocaleTimeString();
+  const body = document.createElement("span");
+  body.className = cls;
+  body.textContent = msg;
+  row.append(time, document.createTextNode(" "), body);
   logEl.appendChild(row);
   logEl.scrollTop = logEl.scrollHeight;
 }

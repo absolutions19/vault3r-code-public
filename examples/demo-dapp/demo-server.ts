@@ -16,6 +16,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
@@ -116,7 +117,7 @@ export async function startDemo(opts: { httpPort?: number; relayPort?: number } 
         return json(res, 200, service.wellKnownRecord());
       }
       if (req.method === "GET" && url.pathname === "/vault/delegate/challenge") {
-        const sid = cookies["sid"] ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const sid = cookies["sid"] ?? randomUUID();
         const headers: Record<string, string> = {};
         if (!cookies["sid"]) headers["set-cookie"] = `sid=${sid}; HttpOnly; SameSite=Strict; Path=/`;
         return json(res, 200, service.issueChallenge(sid), headers);

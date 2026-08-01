@@ -37,7 +37,19 @@ Tracks Forge review findings for the VAULT monorepo and their resolution.
 | 2 | medium (code) | `VaultRuntime.pair` accepted truthy non-`true` unlock results. | RESOLVED | Changed to `if (unlocked !== true) throw`. (An automated RN unit test needs a device/RN test harness not present in this environment.) |
 | 3 | low (code) | Android reported placeholder security-status values while unavailable. | RESOLVED | `hasHardwareBackedKeys → false`, `getSecurityLevel → "software"`; removed hard-coded `hasTee()`. |
 
+## v0.2.0 review (diff since tag v0.1.0)
+
+| # | Sev | Finding | Status | Resolution |
+|---|-----|---------|--------|------------|
+| 1 | medium (code) | `fromBase64Url` accepted non-canonical encodings (length%4===1, non-zero trailing pad bits) → signature malleability risk. | RESOLVED | Reject `length%4===1` and non-zero trailing bits; injective by construction. Regression tests: empty, arbitrary lengths, invalid chars/padding, `"A"`, `"AB"`, `"AAB"`. |
+| 2 | medium (code) | `restoreDekFromRecovery` could throw (e.g. bad nonce length) instead of failing closed. | RESOLVED | Validates salt/nonce/tag lengths + KDF param ranges/types, wraps derive+open in try/catch → returns null. Tests mutate nonce/tag/params/ct to bad-but-valid-b64url. |
+| 3 | medium (security) | Recovery blob had no vault/context binding. | RESOLVED | Added a required `context` (vault id) stored in the blob AND bound into the AEAD AAD; restore requires the expected context. Tests prove wrong/tampered context fails. RN keystore passes its `vaultId`. |
+| 4 | medium (security) | Demo page `log()` used `innerHTML` with the user-controlled name field (DOM XSS). | RESOLVED | Rebuilt with `createElement` + `textContent`; no `innerHTML`. |
+| 5 | low (security) | Demo session id used `Math.random()+Date.now()`. | RESOLVED | Uses `crypto.randomUUID()`. |
+
 ## Notes
 
 - The identity-spoofing guarantee is enforced in two independent places (the on-device resolver and the engine's `identity-verify` chokepoint), both PSL-aware.
 - The native Secure Enclave / Android Keystore implementations remain reference scaffolds (KEK-unwrap and Argon2id recovery are intentionally unimplemented and fail closed); completing them requires a physical device and a vetted Argon2id provider.
+
+- 2026-08-01: base64url decoder accepts non-canonical malformed encodings (seen 2×) — packages/crypto-core/src/encoding.ts: `export function fromBase64Url(s: string): Uint8Array { if (!/^[A-Za-z0-9_-]*$/.test(s)) throw new Error("invalid base64url"); ... return out; }`

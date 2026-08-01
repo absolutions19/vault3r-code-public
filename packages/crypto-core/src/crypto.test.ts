@@ -23,6 +23,36 @@ describe("encoding", () => {
     expect(toBase64Url(b)).not.toContain("=");
     expect(fromBase64Url(toBase64Url(b))).toEqual(b);
   });
+  it("base64url round-trips arbitrary byte lengths", () => {
+    for (let n = 0; n <= 20; n++) {
+      const b = randomBytes(n);
+      expect(fromBase64Url(toBase64Url(b))).toEqual(b);
+    }
+  });
+  it("decodes the empty string to empty bytes", () => {
+    expect(fromBase64Url("")).toEqual(new Uint8Array(0));
+  });
+  it("rejects invalid characters and padding", () => {
+    expect(() => fromBase64Url("AA==")).toThrow(); // '=' not in the url alphabet
+    expect(() => fromBase64Url("a+b/")).toThrow(); // standard base64 chars
+  });
+  it("rejects a length-1 quantum ('A') — cannot encode a whole byte", () => {
+    expect(() => fromBase64Url("A")).toThrow(/length/);
+  });
+  it("rejects non-canonical encodings with non-zero trailing pad bits", () => {
+    // canonical for byte 0x00 is "AA"; "AB"/"AC"/… carry non-zero pad bits
+    expect(() => fromBase64Url("AB")).toThrow(/non-canonical/);
+    // canonical for [0,0] is "AAA"; "AAB" carries non-zero pad bits
+    expect(() => fromBase64Url("AAB")).toThrow(/non-canonical/);
+    // the canonical forms decode fine
+    expect(fromBase64Url("AA")).toEqual(new Uint8Array([0]));
+    expect(fromBase64Url("AAA")).toEqual(new Uint8Array([0, 0]));
+  });
+  it("is injective: every accepted string re-encodes to itself", () => {
+    const b = randomBytes(17);
+    const s = toBase64Url(b);
+    expect(toBase64Url(fromBase64Url(s))).toBe(s);
+  });
   it("timingSafeEqual", () => {
     expect(timingSafeEqual(fromHex("aabb"), fromHex("aabb"))).toBe(true);
     expect(timingSafeEqual(fromHex("aabb"), fromHex("aabc"))).toBe(false);

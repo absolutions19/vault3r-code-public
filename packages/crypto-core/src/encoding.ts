@@ -41,6 +41,8 @@ export function toBase64Url(b: Uint8Array): string {
 
 export function fromBase64Url(s: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]*$/.test(s)) throw new Error("invalid base64url");
+  // A single leftover base64 char cannot encode any whole byte — reject it.
+  if (s.length % 4 === 1) throw new Error("invalid base64url length");
   const out = new Uint8Array(Math.floor((s.length * 3) / 4));
   let oi = 0;
   let buf = 0;
@@ -54,6 +56,9 @@ export function fromBase64Url(s: string): Uint8Array {
       out[oi++] = (buf >> bits) & 0xff;
     }
   }
+  // Reject non-canonical encodings: the unused trailing bits of the final quantum
+  // must be zero, so exactly one string maps to each byte sequence (no malleability).
+  if ((buf & ((1 << bits) - 1)) !== 0) throw new Error("non-canonical base64url");
   return out;
 }
 

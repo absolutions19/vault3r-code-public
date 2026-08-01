@@ -61,6 +61,8 @@ export function deriveRecoveryKey(mnemonic: string, salt: Uint8Array, params: Re
 export interface RecoveryBlob {
   v: 1;
   kdf: "argon2id";
+  /** Vault/context identifier this blob was created for (bound into the AEAD). */
+  context: string;
   t: number;
   m: number;
   p: number;
@@ -70,26 +72,43 @@ export interface RecoveryBlob {
   tag: string; // base64url
 }
 
-/** Bind the KDF params + salt into the AEAD associated data (anti-tamper). */
-function recoveryAad(t: number, m: number, p: number, salt: Uint8Array): Uint8Array {
-  return canonicalBytes({ tag: "vault-recovery/1", kdf: "argon2id", t, m, p, salt: toBase64Url(salt) });
+/** Bind the context + KDF params + salt into the AEAD associated data (anti-tamper). */
+function recoveryAad(context: string, t: number, m: number, p: number, salt: Uint8Array): Uint8Array {
+  return canonicalBytes({ tag: "vault-recovery/1", kdf: "argon2id", context, t, m, p, salt: toBase64Url(salt) });
 }
 
-/** Wrap a DEK under a mnemonic, producing an exportable recovery blob. */
+/** Sane bounds for Argon2id parameters accepted on restore (anti-DoS + validation). */
+function paramsValid(t: unknown, m: unknown, p: unknown): boolean {
+  return (
+    Number.isInteger(t) && (t as number) >= 1 && (t as number) <= 16 &&
+    Number.isInteger(m) && (m as number) >= 1024 && (m as number) <= 4 * 1024 * 1024 &&
+    Number.isInteger(p) && (p as number) >= 1 && (p as number) <= 16
+  );
+}
+
+/**
+ * Wrap a DEK under a mnemonic, producing an exportable recovery blob bound to a
+ * `context` (e.g. the vault id). A blob made for one vault will not restore into
+ * another, and any tampering with context/params/salt breaks the AEAD.
+ */
 export function createRecoveryBlob(
   dek: Uint8Array,
   mnemonic: string,
+  context: string,
   params: RecoveryParams = DEFAULT_RECOVERY_PARAMS,
 ): RecoveryBlob {
   if (dek.length !== DEK_BYTES) throw new Error("DEK must be 32 bytes");
   if (!isValidRecoveryMnemonic(mnemonic)) throw new Error("invalid recovery mnemonic");
+  if (typeof context !== "string" || context.length === 0) throw new Error("recovery context required");
+  if (!paramsValid(params.t, params.m, params.p)) throw new Error("invalid Argon2id parameters");
   const salt = randomBytes(SALT_BYTES);
   const key = deriveRecoveryKey(mnemonic, salt, params);
   const nonce = randomBytes(24);
-  const box = xchachaSeal(key, nonce, dek, recoveryAad(params.t, params.m, params.p, salt));
+  const box = xchachaSeal(key, nonce, dek, recoveryAad(context, params.t, params.m, params.p, salt));
   return {
     v: 1,
     kdf: "argon2id",
+    context,
     t: params.t,
     m: params.m,
     p: params.p,
@@ -100,21 +119,33 @@ export function createRecoveryBlob(
   };
 }
 
-/** Unwrap a DEK from a recovery blob using the mnemonic. Null on wrong mnemonic/tamper. */
-export function restoreDekFromRecovery(blob: RecoveryBlob, mnemonic: string): Uint8Array | null {
-  if (blob.v !== 1 || blob.kdf !== "argon2id") return null;
-  if (!isValidRecoveryMnemonic(mnemonic)) return null;
-  let salt: Uint8Array, nonce: Uint8Array, ct: Uint8Array, tag: Uint8Array;
+/**
+ * Unwrap a DEK from a recovery blob using the mnemonic. Fails CLOSED (returns
+ * null) for a wrong mnemonic, a context mismatch, malformed fields, or any
+ * tampering — it never throws on a syntactically-valid-but-bad blob.
+ */
+export function restoreDekFromRecovery(
+  blob: RecoveryBlob,
+  mnemonic: string,
+  expectedContext: string,
+): Uint8Array | null {
   try {
-    salt = fromBase64Url(blob.salt);
-    nonce = fromBase64Url(blob.nonce);
-    ct = fromBase64Url(blob.ct);
-    tag = fromBase64Url(blob.tag);
+    if (!blob || blob.v !== 1 || blob.kdf !== "argon2id") return null;
+    if (typeof blob.context !== "string" || blob.context !== expectedContext) return null;
+    if (!paramsValid(blob.t, blob.m, blob.p)) return null;
+    if (!isValidRecoveryMnemonic(mnemonic)) return null;
+
+    const salt = fromBase64Url(blob.salt);
+    const nonce = fromBase64Url(blob.nonce);
+    const ct = fromBase64Url(blob.ct);
+    const tag = fromBase64Url(blob.tag);
+    if (salt.length < 8 || salt.length > 64 || nonce.length !== 24 || tag.length !== 16) return null;
+
+    const key = deriveRecoveryKey(mnemonic, salt, { t: blob.t, m: blob.m, p: blob.p });
+    return xchachaOpen(key, nonce, ct, tag, recoveryAad(blob.context, blob.t, blob.m, blob.p, salt));
   } catch {
     return null;
   }
-  const key = deriveRecoveryKey(mnemonic, salt, { t: blob.t, m: blob.m, p: blob.p });
-  return xchachaOpen(key, nonce, ct, tag, recoveryAad(blob.t, blob.m, blob.p, salt));
 }
 
 /** Serialize a blob to a compact string the user can store (QR / file). */
