@@ -1,6 +1,6 @@
 {
   "name": "@vault/sdk",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "VAULT client SDK for target applications: EIP-1193-shaped provider, pairing, delegated request signing, and get/set/patch/subscribe over the relay.",

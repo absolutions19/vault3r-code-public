@@ -1,6 +1,6 @@
 {
   "name": "@vault/app",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "VAULT mobile app (Expo / React Native). Biometric-gated, on-device encrypted vault with the crypto-wallet-style permission protocol.",
   "main": "index.ts",

@@ -65,6 +65,18 @@ A 5-agent attack→verify workflow probed the new input-hardening controls and f
 - **input-caps (6):** `set_data` bypassed `MAX_PATCH_OPS` (moved cap into shared `applyChanges`); `subscribe` bypassed `MAX_PATHS_PER_REQUEST` (added cap); **HIGH** intermediate array index → multi-GB sparse-array OOM (bounded index to `cur.length`); `MAX_JSON_DEPTH` unenforced on the stored doc (added `withinDepth` check); `MAX_FIELD_PATH_LEN` measured in UTF-16 not bytes (now bytes); **HIGH** `MAX_ENVELOPE_BYTES` never enforced in `openEnvelope` (now rejected pre-decode).
 - **revocation (2):** **HIGH** TOCTOU — a key revoked after connect kept access for the session lifetime (now re-checked on the data plane with a short cache TTL, and unconditionally on extend, fail-closed); `retired` keys could mint fresh delegations (`keyUsable` now requires `active`).
 
+## v0.2.2 Forge review (Track C diff, 4 rounds → APPROVED)
+
+On top of the internal red-team, Forge found 8 more (all fixed; 158 tests):
+- **HIGH** prototype pollution — `parsePointer` now rejects `__proto__`/`constructor`/`prototype` tokens (every pointer op + grant match).
+- **HIGH** revocation fail-open — records declaring a `statusEndpoint` now fail closed at connect AND on the data plane if no checker is configured; data-plane re-check with short cache TTL, always on extend.
+- depth accounting off-by-one in BOTH `parseJsonStrict` (root depth) and `withinDepth` (empty container at budget 0) — now aligned: exactly `MAX_JSON_DEPTH` accepted, +1 rejected.
+- envelope pre-decode size gate made exact (`base64UrlLen(MAX_ENVELOPE_BYTES)`) so MAX+1 is rejected before `fromBase64Url`.
+- relay frame cap measured on raw inbound bytes (not UTF-16 length) before decode/parse.
+- boundary/regression test gaps filled (MAX/MAX+1 for depth, ops, paths, plaintext; multibyte pointer; state-preservation on rejected write).
+
+**Approved checkpoints: v0.1.0, v0.2.1, v0.2.2.**
+
 ## Notes
 
 - The identity-spoofing guarantee is enforced in two independent places (the on-device resolver and the engine's `identity-verify` chokepoint), both PSL-aware.
