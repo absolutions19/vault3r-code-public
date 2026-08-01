@@ -40,91 +40,32 @@ public class VaultKeystoreModule: Module {
       return SecureEnclave.isAvailable ? "secure-enclave" : "software"
     }
 
-    AsyncFunction("provision") { () -> [String: String] in
-      let access = SecAccessControlCreateWithFlags(
-        nil,
-        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        [.privateKeyUsage, .biometryCurrentSet],
-        nil
-      )!
-      let kek = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access)
-      try self.persist(self.kekTag, kek.dataRepresentation)
-
-      // Random DEK, wrapped to the KEK's public key via ECDH + HKDF.
-      let dek = SymmetricKey(size: .bits256)
-      let wrapped = try self.wrapDek(dek, kekPublic: kek.publicKey)
-      self.sessionDek = dek
-
-      let deviceKey = Curve25519.Signing.PrivateKey()
-      try self.persist(self.deviceKeyTag, deviceKey.rawRepresentation)
-
-      return [
-        "wrappedDek": wrapped.base64URLEncodedString(),
-        "deviceKeyPublic": deviceKey.publicKey.rawRepresentation.base64URLEncodedString(),
-        "vaultId": UUID().uuidString
-      ]
-    }
-
-    AsyncFunction("unlock") { (reason: String) -> Bool in
-      let context = LAContext()
-      var err: NSError?
-      guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &err) else { return false }
-      let ok = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
-      guard ok else { return false }
-      self.sessionDek = try self.unwrapDekWithKek()
-      return true
-    }
-
-    AsyncFunction("lock") { () in
-      self.sessionDek = nil // ARC releases; native memory is not on the JS heap
-    }
-
-    AsyncFunction("isUnlocked") { () -> Bool in
-      return self.sessionDek != nil
-    }
-
-    AsyncFunction("authenticate") { (reason: String) -> Bool in
-      let context = LAContext()
-      return (try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) ?? false
-    }
-
-    AsyncFunction("seal") { (storageKey: String, aadB64: String, plaintextB64: String) -> String in
-      let key = try self.namespaceKey(storageKey)
-      let aad = Data(base64URLEncoded: aadB64)!
-      let pt = Data(base64URLEncoded: plaintextB64)!
-      let sealed = try ChaChaPoly.seal(pt, using: key, authenticating: aad)
-      return sealed.combined.base64URLEncodedString()
-    }
-
-    AsyncFunction("open") { (storageKey: String, aadB64: String, blobB64: String) -> String? in
-      let key = try self.namespaceKey(storageKey)
-      let aad = Data(base64URLEncoded: aadB64)!
-      guard let blob = Data(base64URLEncoded: blobB64),
-            let box = try? ChaChaPoly.SealedBox(combined: blob),
-            let pt = try? ChaChaPoly.open(box, using: key, authenticating: aad) else { return nil }
-      return pt.base64URLEncodedString()
-    }
-
-    AsyncFunction("deviceSign") { (bytesB64: String) -> String in
-      let key = try self.loadDeviceKey()
-      let sig = try key.signature(for: Data(base64URLEncoded: bytesB64)!)
-      return sig.base64URLEncodedString()
-    }
-
-    AsyncFunction("deviceKeyPublic") { () -> String in
-      return try self.loadDeviceKey().publicKey.rawRepresentation.base64URLEncodedString()
-    }
-
-    AsyncFunction("exportRecoveryWrappedDek") { (mnemonic: String) -> String in
-      // Argon2id(mnemonic) → K_recovery → wrap DEK. (Argon2id via a vetted lib.)
-      throw Exception(name: "NotImplemented", description: "Wire Argon2id + recovery wrap here")
-    }
+    // FAIL CLOSED: every operational method throws while `isAvailable` is false,
+    // so the module never hands the JS side usable key material, signatures,
+    // ciphertext, vault ids, or a successful auth result. The real logic lives in
+    // the private reference helpers below; wire them up, verify, and only then
+    // implement these operations and flip `isAvailable`.
+    AsyncFunction("provision") { () -> [String: String] in try self.failClosed("provision") }
+    AsyncFunction("unlock") { (reason: String) -> Bool in try self.failClosed("unlock") }
+    AsyncFunction("lock") { () in self.sessionDek = nil } // harmless; native memory only
+    AsyncFunction("isUnlocked") { () -> Bool in return self.sessionDek != nil }
+    AsyncFunction("authenticate") { (reason: String) -> Bool in try self.failClosed("authenticate") }
+    AsyncFunction("seal") { (storageKey: String, aadB64: String, plaintextB64: String) -> String in try self.failClosed("seal") }
+    AsyncFunction("open") { (storageKey: String, aadB64: String, blobB64: String) -> String? in try self.failClosed("open") }
+    AsyncFunction("deviceSign") { (bytesB64: String) -> String in try self.failClosed("deviceSign") }
+    AsyncFunction("deviceKeyPublic") { () -> String in try self.failClosed("deviceKeyPublic") }
+    AsyncFunction("exportRecoveryWrappedDek") { (mnemonic: String) -> String in try self.failClosed("exportRecoveryWrappedDek") }
     AsyncFunction("importRecoveryWrappedDek") { (mnemonic: String, wrapped: String) -> Bool in
-      throw Exception(name: "NotImplemented", description: "Wire Argon2id + recovery unwrap here")
+      return try self.failClosed("importRecoveryWrappedDek")
     }
   }
 
   // MARK: - helpers (KEK/DEK, per-namespace subkey, keychain persistence)
+
+  /// Uniform fail-closed error for every unimplemented operation.
+  private func failClosed<T>(_ op: String) throws -> T {
+    throw Exception(name: "NotAvailable", description: "VaultKeystore.\(op) is not implemented; module reports isAvailable=false")
+  }
 
   private func namespaceKey(_ storageKey: String) throws -> SymmetricKey {
     guard let dek = sessionDek else { throw Exception(name: "Locked", description: "vault is locked") }

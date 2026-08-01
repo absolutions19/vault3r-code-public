@@ -139,13 +139,14 @@ export class RnKeystore implements KeystoreAdapter {
 
   async unlock(req?: AuthRequest): Promise<boolean> {
     if (this.native) {
-      const ok = await VaultKeystore!.unlock(req?.prompt ?? "Unlock your vault");
+      // Only a literal `true` unlocks; a malformed/non-boolean return is failure.
+      const ok = (await VaultKeystore!.unlock(req?.prompt ?? "Unlock your vault")) === true;
       this.unlocked = ok;
       return ok;
     }
     const res = await LocalAuthentication.authenticateAsync({ promptMessage: req?.prompt ?? "Unlock your vault" });
-    this.unlocked = res.success;
-    return res.success;
+    this.unlocked = res.success === true;
+    return this.unlocked;
   }
 
   lock(): void {
@@ -154,9 +155,9 @@ export class RnKeystore implements KeystoreAdapter {
   }
 
   async authenticate(req: AuthRequest): Promise<boolean> {
-    if (this.native) return VaultKeystore!.authenticate(req.prompt);
+    if (this.native) return (await VaultKeystore!.authenticate(req.prompt)) === true;
     const res = await LocalAuthentication.authenticateAsync({ promptMessage: req.prompt });
-    return res.success;
+    return res.success === true;
   }
 
   async sealNamespace(storageKey: string, aad: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array> {

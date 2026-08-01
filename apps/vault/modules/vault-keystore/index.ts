@@ -16,7 +16,8 @@ import { requireOptionalNativeModule } from "expo-modules-core";
 export type SecurityLevel = "strongbox" | "tee" | "secure-enclave" | "software";
 
 export interface ProvisionResult {
-  wrappedDek: string; // DEK wrapped by the hardware KEK (base64)
+  // The wrapped DEK is persisted natively (inside the Keychain / Keystore) and is
+  // never exposed to JS — the JS side only receives the public device key + id.
   deviceKeyPublic: string; // Ed25519 device public key (base64url)
   vaultId: string;
 }

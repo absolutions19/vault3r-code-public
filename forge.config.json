@@ -3,7 +3,7 @@
   "projectRoot": ".",
   "commands": {
     "start": null,
-    "test": "npm run test",
+    "test": "npm run e2e && npm run test",
     "build": null,
     "lint": "npm run typecheck",
     "uiTest": null
