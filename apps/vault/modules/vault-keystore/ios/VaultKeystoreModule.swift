@@ -54,9 +54,10 @@ public class VaultKeystoreModule: Module {
     AsyncFunction("open") { (storageKey: String, aadB64: String, blobB64: String) -> String? in try self.failClosed("open") }
     AsyncFunction("deviceSign") { (bytesB64: String) -> String in try self.failClosed("deviceSign") }
     AsyncFunction("deviceKeyPublic") { () -> String in try self.failClosed("deviceKeyPublic") }
-    AsyncFunction("exportRecoveryWrappedDek") { (mnemonic: String) -> String in try self.failClosed("exportRecoveryWrappedDek") }
-    AsyncFunction("importRecoveryWrappedDek") { (mnemonic: String, wrapped: String) -> Bool in
-      return try self.failClosed("importRecoveryWrappedDek")
+    AsyncFunction("hasRecoveryBackup") { () -> Bool in try self.failClosed("hasRecoveryBackup") }
+    AsyncFunction("createRecoveryBackup") { (mnemonic: String) -> Bool in try self.failClosed("createRecoveryBackup") }
+    AsyncFunction("restoreFromRecovery") { (mnemonic: String) -> Bool in
+      return try self.failClosed("restoreFromRecovery")
     }
   }
 
@@ -88,7 +89,7 @@ public class VaultKeystoreModule: Module {
     // Load KEK from keychain (usage triggers the biometric access control), run
     // ECDH with the stored ephemeral public key, HKDF, and AEAD-unwrap the DEK.
     // (Elided: symmetric to wrapDek.)
-    throw Exception(name: "NotImplemented", description: "Load KEK + unwrap stored wrappedDek")
+    throw Exception(name: "NotImplemented", description: "Load KEK + unwrap the stored DEK blob")
   }
 
   private func loadDeviceKey() throws -> Curve25519.Signing.PrivateKey {

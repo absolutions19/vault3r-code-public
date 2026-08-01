@@ -43,7 +43,8 @@ export class VaultRuntime {
   async pair(uri: string): Promise<void> {
     if (!this.keystore.isUnlocked()) {
       const unlocked = await this.keystore.unlock({ reason: "unlock", prompt: "Unlock to connect" });
-      if (!unlocked) throw new Error("Vault must be unlocked to connect an app");
+      // Require a literal boolean true — a truthy non-true value is a failure.
+      if (unlocked !== true) throw new Error("Vault must be unlocked to connect an app");
     }
     await this.node.pair(uri);
   }

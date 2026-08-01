@@ -20,6 +20,23 @@ Tracks Forge review findings for the VAULT monorepo and their resolution.
 | 3 | medium (code) | `VaultRuntime.pair` ignored the `unlock()` result. | RESOLVED | `pair` now aborts with an error if `unlock()` returns false, before calling `node.pair`. |
 | 4 | medium (other) | Missing written review artifact. | RESOLVED | This file. |
 
+## Round 3 (correctness + security reviewers)
+
+| # | Sev | Finding | Status | Resolution |
+|---|-----|---------|--------|------------|
+| 1 | high (security) | iOS module still performed real ops while `isAvailable=false`. | RESOLVED | Every iOS operational method now throws `failClosed(op)`; real logic kept as private reference helpers only. |
+| 2 | medium (code) | `provision().wrappedDek` was declared but unused/unvalidated at the JS boundary. | RESOLVED | Removed `wrappedDek` from `ProvisionResult`; DEK wrapping is native-internal. |
+| 3 | medium (security) | Native boolean returns (unlock/authenticate) weren't strictly validated. | RESOLVED | `RnKeystore` requires `=== true`; anything else is failure. |
+| 4 | medium (tests) | Standalone `pnpm run e2e` evidence missing. | RESOLVED | Forge test command now runs `npm run e2e && npm run test`; both pass. |
+
+## Round 4 (correctness + security reviewers)
+
+| # | Sev | Finding | Status | Resolution |
+|---|-----|---------|--------|------------|
+| 1 | medium (security) | Recovery methods still exposed wrapped-DEK material through the JS contract. | RESOLVED | Redesigned to `hasRecoveryBackup` / `createRecoveryBackup` / `restoreFromRecovery` (boolean-only); the wrapped blob is native-managed and never crosses to JS. |
+| 2 | medium (code) | `VaultRuntime.pair` accepted truthy non-`true` unlock results. | RESOLVED | Changed to `if (unlocked !== true) throw`. (An automated RN unit test needs a device/RN test harness not present in this environment.) |
+| 3 | low (code) | Android reported placeholder security-status values while unavailable. | RESOLVED | `hasHardwareBackedKeys → false`, `getSecurityLevel → "software"`; removed hard-coded `hasTee()`. |
+
 ## Notes
 
 - The identity-spoofing guarantee is enforced in two independent places (the on-device resolver and the engine's `identity-verify` chokepoint), both PSL-aware.

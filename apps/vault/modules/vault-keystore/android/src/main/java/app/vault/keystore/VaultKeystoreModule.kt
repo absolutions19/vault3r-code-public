@@ -34,15 +34,10 @@ class VaultKeystoreModule : Module() {
     // `isAvailable` to true ONLY once every operation below is fully implemented.
     Function("isAvailable") { false }
 
-    AsyncFunction("hasHardwareBackedKeys") { hasStrongBoxOrTee() }
-
-    AsyncFunction("getSecurityLevel") {
-      when {
-        hasStrongBox() -> "strongbox"
-        hasTee() -> "tee"
-        else -> "software"
-      }
-    }
+    // While the module is unavailable, report honestly: no hardware backing and
+    // the lowest security level. These flip to real probes once implemented.
+    AsyncFunction("hasHardwareBackedKeys") { false }
+    AsyncFunction("getSecurityLevel") { "software" }
 
     AsyncFunction("provision") { failNotImplemented("provision") }
     AsyncFunction("unlock") { reason: String -> failNotImplemented("unlock") }
@@ -53,8 +48,9 @@ class VaultKeystoreModule : Module() {
     AsyncFunction("open") { storageKey: String, aadB64: String, blobB64: String -> failNotImplemented("open") }
     AsyncFunction("deviceSign") { bytesB64: String -> failNotImplemented("deviceSign") }
     AsyncFunction("deviceKeyPublic") { failNotImplemented("deviceKeyPublic") }
-    AsyncFunction("exportRecoveryWrappedDek") { mnemonic: String -> failNotImplemented("exportRecoveryWrappedDek") }
-    AsyncFunction("importRecoveryWrappedDek") { mnemonic: String, wrapped: String -> failNotImplemented("importRecoveryWrappedDek") }
+    AsyncFunction("hasRecoveryBackup") { failNotImplemented("hasRecoveryBackup") }
+    AsyncFunction("createRecoveryBackup") { mnemonic: String -> failNotImplemented("createRecoveryBackup") }
+    AsyncFunction("restoreFromRecovery") { mnemonic: String -> failNotImplemented("restoreFromRecovery") }
   }
 
   private fun failNotImplemented(op: String): Nothing =
@@ -85,11 +81,9 @@ class VaultKeystoreModule : Module() {
   }
 
   private fun keyStore(): KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-  private fun hasStrongBox(): Boolean = /* PackageManager.FEATURE_STRONGBOX_KEYSTORE */ false
-  private fun hasTee(): Boolean = true
-  private fun hasStrongBoxOrTee(): Boolean = hasStrongBox() || hasTee()
-  private fun promptBiometric(reason: String): Boolean = false // wire BiometricPrompt
-  private fun promptBiometricAndUnwrap(reason: String): Boolean = false
+  // Real probe (used by provisionKek once implemented): PackageManager
+  // .hasSystemFeature(FEATURE_STRONGBOX_KEYSTORE). Defaults to false until wired.
+  private fun hasStrongBox(): Boolean = false
 
   companion object {
     private const val KEK_ALIAS = "app.vault.kek"

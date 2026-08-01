@@ -45,9 +45,16 @@ export interface VaultKeystoreNativeModule {
   deviceSign(bytesB64: string): Promise<string>;
   deviceKeyPublic(): Promise<string>;
 
-  /** Recovery: wrap/unwrap the DEK under an Argon2id-stretched BIP-39 mnemonic. */
-  exportRecoveryWrappedDek(mnemonic: string): Promise<string>;
-  importRecoveryWrappedDek(mnemonic: string, wrappedDek: string): Promise<boolean>;
+  /**
+   * Recovery is handled entirely natively: the wrapped-DEK material never crosses
+   * the JS boundary. `createRecoveryBackup` derives K_recovery = Argon2id(mnemonic),
+   * wraps the DEK, and writes the opaque blob to a native-managed backup location;
+   * `restoreFromRecovery` reads it, unwraps with the mnemonic, and re-provisions.
+   * JS only ever sees a boolean.
+   */
+  hasRecoveryBackup(): Promise<boolean>;
+  createRecoveryBackup(mnemonic: string): Promise<boolean>;
+  restoreFromRecovery(mnemonic: string): Promise<boolean>;
 }
 
 /** The native module, or null on platforms/dev builds where it is absent. */
