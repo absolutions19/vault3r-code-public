@@ -1,6 +1,6 @@
 {
   "name": "@vault/crypto-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "VAULT cryptographic core: X25519/HKDF/XChaCha20-Poly1305 envelope, Ed25519 identity signing/verification, deterministic canonical encoding, and namespace derivation. Pure JS via @noble/* — runs in Node, the browser, and React Native.",

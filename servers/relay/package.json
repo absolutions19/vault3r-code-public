@@ -1,6 +1,6 @@
 {
   "name": "@vault/relay",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "VAULT zero-knowledge relay: WebSocket publish/subscribe routed by topic, with a bounded TTL mailbox and content-free push-to-wake triggers. Sees ciphertext and metadata only.",

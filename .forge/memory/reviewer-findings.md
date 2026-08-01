@@ -47,6 +47,16 @@ Tracks Forge review findings for the VAULT monorepo and their resolution.
 | 4 | medium (security) | Demo page `log()` used `innerHTML` with the user-controlled name field (DOM XSS). | RESOLVED | Rebuilt with `createElement` + `textContent`; no `innerHTML`. |
 | 5 | low (security) | Demo session id used `Math.random()+Date.now()`. | RESOLVED | Uses `crypto.randomUUID()`. |
 
+### v0.2.0 review — round 2 (then APPROVED, 0 findings)
+
+| # | Sev | Finding | Status | Resolution |
+|---|-----|---------|--------|------------|
+| 1 | medium (code) | `restoreDekFromRecovery` didn't enforce ct/plaintext DEK length. | RESOLVED | Require `ct.length === 32` before open and decrypted `pt.length === 32` after; tests for short/long ct. |
+| 2 | medium (ui) | One `innerHTML` remained (namespace pill). | RESOLVED | Built with `createElement` + `textContent` + `replaceChildren`; zero innerHTML in the demo. |
+| 3 | medium (security) | esbuild `^0.24.0` on a vulnerable line. | RESOLVED | Bumped to `^0.25.12`; bundle rebuilds. |
+
+**Tagged as v0.2.1 (Forge-approved).** v0.1.0 and v0.2.1 are the approved checkpoints.
+
 ## Notes
 
 - The identity-spoofing guarantee is enforced in two independent places (the on-device resolver and the engine's `identity-verify` chokepoint), both PSL-aware.

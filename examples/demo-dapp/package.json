@@ -1,6 +1,6 @@
 {
   "name": "@vault/demo-dapp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Reference target application: a backend delegation signer (/vault/delegate with CSRF + proof-of-possession) plus a minimal client that uses @vault/sdk.",
