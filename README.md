@@ -82,6 +82,7 @@ the wire reference.
 | v0.2.0 browser SDK bundle + demo page | ✅ tested (headless demo-flow) |
 | v0.2.0 Argon2id + BIP-39 recovery (crypto-core) | ✅ tested |
 | v0.2.0 session-extend caps + subscription re-auth | ✅ tested |
+| v0.2.2 input hardening (strict JSON parser, DoS caps, revocation TOCTOU, proto-pollution) | ✅ tested (red-team + Forge) |
 
 ## Limitations (honest)
 
