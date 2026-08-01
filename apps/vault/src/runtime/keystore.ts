@@ -27,6 +27,9 @@ import {
 import * as LocalAuthentication from "expo-local-authentication";
 import { VaultKeystore, isNativeKeystoreAvailable } from "../../modules/vault-keystore";
 
+/** React Native injects `__DEV__` (true in dev builds, false in release). */
+declare const __DEV__: boolean;
+
 const PACK = 0x01;
 const SS = { dek: "vault.masterDek", device: "vault.deviceSeed", vaultId: "vault.vaultId" };
 
@@ -43,7 +46,16 @@ export class RnKeystore implements KeystoreAdapter {
   }
 
   static async create(): Promise<RnKeystore> {
-    const ks = new RnKeystore(isNativeKeystoreAvailable());
+    const native = isNativeKeystoreAvailable();
+    // Fail CLOSED in production: the pure-JS fallback provides no hardware
+    // isolation, so a release build must never silently downgrade to it.
+    if (!native && !__DEV__) {
+      throw new Error(
+        "Hardware-backed keystore unavailable. The JS fallback is development-only; " +
+          "refusing to store vault secrets without Secure Enclave / Android Keystore.",
+      );
+    }
+    const ks = new RnKeystore(native);
     if (ks.native) {
       const has = await SecureStore.getItemAsync(SS.vaultId);
       if (!has) {
@@ -70,7 +82,11 @@ export class RnKeystore implements KeystoreAdapter {
       dek = toBase64Url(randomBytes(32));
       device = toBase64Url(kp.privateKey);
       vaultId = toBase64Url(randomBytes(16));
-      await SecureStore.setItemAsync(SS.dek, dek, { requireAuthentication: false });
+      // Dev-only path. Still request biometric gating on the DEK where the OS
+      // supports it (falls back automatically on a device without enrolled
+      // biometrics, e.g. a bare simulator).
+      const hasBio = await LocalAuthentication.hasHardwareAsync().catch(() => false);
+      await SecureStore.setItemAsync(SS.dek, dek, { requireAuthentication: hasBio });
       await SecureStore.setItemAsync(SS.device, device);
       await SecureStore.setItemAsync(SS.vaultId, vaultId);
     }

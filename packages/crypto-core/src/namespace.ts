@@ -42,6 +42,29 @@ export function registrableDomain(host: string): string | null {
   return getDomain(host);
 }
 
+/**
+ * Whether an identity record's self-declared `domain` is authoritative for a host
+ * the vault fetched the record from. True iff the host equals the record domain,
+ * or both reduce to the SAME registrable domain (eTLD+1) using the Public Suffix
+ * List — so `example.com` is authoritative for `app.example.com`, but
+ * `attacker.co.uk` is NOT authoritative for `victim.co.uk` (distinct eTLD+1s,
+ * which a naive "last two labels" check would wrongly accept).
+ */
+export function isAuthoritativeForHost(recordDomain: string, host: string): boolean {
+  let normRecord: string;
+  let normHost: string;
+  try {
+    normRecord = normalizeHost(recordDomain);
+    normHost = normalizeHost(host);
+  } catch {
+    return false;
+  }
+  if (normRecord === normHost) return true;
+  const rd = registrableDomain(normRecord);
+  const hd = registrableDomain(normHost);
+  return rd !== null && rd === hd;
+}
+
 export interface DerivedNamespace {
   namespace: Namespace;
   canonicalKey: string;

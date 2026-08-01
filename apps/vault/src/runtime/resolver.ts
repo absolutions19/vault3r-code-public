@@ -6,7 +6,7 @@
  */
 
 import type { IdentityResolver } from "@vault/vault-core";
-import { normalizeHost, NamespaceError } from "@vault/crypto-core";
+import { normalizeHost, isAuthoritativeForHost, NamespaceError } from "@vault/crypto-core";
 import type { VaultIdentityRecord } from "@vault/protocol";
 
 const MAX_RECORD_BYTES = 128 * 1024;
@@ -35,19 +35,12 @@ export class FetchIdentityResolver implements IdentityResolver {
       const text = await res.text();
       if (text.length > MAX_RECORD_BYTES) return null;
       const record = JSON.parse(text) as VaultIdentityRecord;
-      // The record must self-declare the host we fetched from.
-      if (normalizeHost(record.domain) === host || sameRegistrable(record.domain, host)) return record;
+      // The record must be authoritative for the host we fetched it from (PSL-aware).
+      // The engine's identity-verify pipeline independently re-checks this.
+      if (isAuthoritativeForHost(record.domain, host)) return record;
       return null;
     } catch {
       return null;
     }
-  }
-}
-
-function sameRegistrable(a: string, b: string): boolean {
-  try {
-    return normalizeHost(a).split(".").slice(-2).join(".") === normalizeHost(b).split(".").slice(-2).join(".");
-  } catch {
-    return false;
   }
 }

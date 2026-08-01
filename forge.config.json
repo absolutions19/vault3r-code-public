@@ -1,0 +1,64 @@
+{
+  "projectType": "node",
+  "projectRoot": ".",
+  "commands": {
+    "start": null,
+    "test": "npm run test",
+    "build": null,
+    "lint": "npm run typecheck",
+    "uiTest": null
+  },
+  "appUrl": null,
+  "reviewers": {
+    "enabled": [
+      "correctness",
+      "security"
+    ]
+  },
+  "limits": {
+    "maxLoops": 5,
+    "builderTimeoutMs": 900000,
+    "commandTimeoutMs": 600000,
+    "maxTokensPerRun": 0,
+    "maxConcurrency": 4
+  },
+  "dirtyWorktree": "refuse",
+  "protectedPaths": [
+    ".env",
+    ".env.*",
+    ".forge/**",
+    ".git/**"
+  ],
+  "planner": {
+    "enabled": true
+  },
+  "verify": {
+    "requireExecution": true
+  },
+  "memory": {
+    "enabled": true
+  },
+  "qa": {
+    "enabled": "auto",
+    "allowDestructive": false,
+    "screenshotPolicy": "on-failure",
+    "recordVideo": false,
+    "browser": {
+      "headless": true,
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      }
+    },
+    "maxClicks": null,
+    "maxLinks": null,
+    "safeLabels": [],
+    "unsafeLabels": []
+  },
+  "visual": {
+    "enabled": "never"
+  },
+  "git": {
+    "allowCommit": false
+  }
+}

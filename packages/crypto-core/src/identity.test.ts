@@ -11,6 +11,7 @@ import {
   deriveNamespace,
   normalizeHost,
   registrableDomain,
+  isAuthoritativeForHost,
   detectHomograph,
   isMixedScript,
   confusableSkeleton,
@@ -68,6 +69,27 @@ describe("namespace derivation", () => {
   });
   it("registrableDomain reduces subdomains", () => {
     expect(registrableDomain("a.b.example.co.uk")).toBe("example.co.uk");
+  });
+});
+
+describe("record authoritativeness for a host (anti-spoofing, PSL-aware)", () => {
+  it("accepts exact host and same registrable domain", () => {
+    expect(isAuthoritativeForHost("example.com", "example.com")).toBe(true);
+    expect(isAuthoritativeForHost("example.com", "app.example.com")).toBe(true);
+    expect(isAuthoritativeForHost("example.com", "a.b.example.com")).toBe(true);
+  });
+  it("rejects unrelated domains", () => {
+    expect(isAuthoritativeForHost("evil.com", "example.com")).toBe(false);
+    expect(isAuthoritativeForHost("example.com", "example.org")).toBe(false);
+  });
+  it("rejects public-suffix siblings (the naive last-two-labels bug)", () => {
+    // Both end in `co.uk`, but they are DIFFERENT registrable domains.
+    expect(isAuthoritativeForHost("attacker.co.uk", "victim.co.uk")).toBe(false);
+    expect(isAuthoritativeForHost("attacker.co.uk", "app.victim.co.uk")).toBe(false);
+  });
+  it("rejects a parent-domain claim over a different child registrable", () => {
+    expect(isAuthoritativeForHost("com", "example.com")).toBe(false);
+    expect(isAuthoritativeForHost("co.uk", "victim.co.uk")).toBe(false);
   });
 });
 

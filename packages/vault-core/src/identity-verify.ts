@@ -20,7 +20,7 @@
 import {
   deriveNamespace,
   normalizeHost,
-  registrableDomain,
+  isAuthoritativeForHost,
   detectHomograph,
   verifyIdentityRecordProof,
   verifyDelegation,
@@ -79,10 +79,9 @@ export async function verifyProposal(
   const proof = verifyIdentityRecordProof(record, ctx.now);
   if (!proof.ok) throw VaultError.of("IdentityUnverified", `record proof: ${proof.reason}`);
 
-  // 3. The record must be authoritative for the claimed host.
-  const claimedReg = registrableDomain(canonicalHost);
-  const recordReg = registrableDomain(normalizeHost(record.domain));
-  if (!claimedReg || !recordReg || claimedReg !== recordReg) {
+  // 3. The record must be authoritative for the claimed host (PSL-aware; a naive
+  //    last-two-labels check would accept attacker.co.uk for victim.co.uk).
+  if (!isAuthoritativeForHost(record.domain, canonicalHost)) {
     throw VaultError.of("IdentityUnverified", "record is not authoritative for the claimed host");
   }
 

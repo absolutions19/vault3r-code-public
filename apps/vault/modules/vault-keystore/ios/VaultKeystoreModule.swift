@@ -55,7 +55,7 @@ public class VaultKeystoreModule: Module {
       try self.persist(self.deviceKeyTag, deviceKey.rawRepresentation)
 
       return [
-        "wrappedDek": wrapped.base64EncodedString(),
+        "wrappedDek": wrapped.base64URLEncodedString(),
         "deviceKeyPublic": deviceKey.publicKey.rawRepresentation.base64URLEncodedString(),
         "vaultId": UUID().uuidString
       ]
@@ -86,24 +86,24 @@ public class VaultKeystoreModule: Module {
 
     AsyncFunction("seal") { (storageKey: String, aadB64: String, plaintextB64: String) -> String in
       let key = try self.namespaceKey(storageKey)
-      let aad = Data(base64Encoded: aadB64)!
-      let pt = Data(base64Encoded: plaintextB64)!
+      let aad = Data(base64URLEncoded: aadB64)!
+      let pt = Data(base64URLEncoded: plaintextB64)!
       let sealed = try ChaChaPoly.seal(pt, using: key, authenticating: aad)
-      return sealed.combined.base64EncodedString()
+      return sealed.combined.base64URLEncodedString()
     }
 
     AsyncFunction("open") { (storageKey: String, aadB64: String, blobB64: String) -> String? in
       let key = try self.namespaceKey(storageKey)
-      let aad = Data(base64Encoded: aadB64)!
-      guard let blob = Data(base64Encoded: blobB64),
+      let aad = Data(base64URLEncoded: aadB64)!
+      guard let blob = Data(base64URLEncoded: blobB64),
             let box = try? ChaChaPoly.SealedBox(combined: blob),
             let pt = try? ChaChaPoly.open(box, using: key, authenticating: aad) else { return nil }
-      return pt.base64EncodedString()
+      return pt.base64URLEncodedString()
     }
 
     AsyncFunction("deviceSign") { (bytesB64: String) -> String in
       let key = try self.loadDeviceKey()
-      let sig = try key.signature(for: Data(base64Encoded: bytesB64)!)
+      let sig = try key.signature(for: Data(base64URLEncoded: bytesB64)!)
       return sig.base64URLEncodedString()
     }
 
@@ -158,5 +158,14 @@ public class VaultKeystoreModule: Module {
 extension Data {
   func base64URLEncodedString() -> String {
     base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+  }
+
+  /// Decode base64url (the encoding the JS bridge uses). The whole bridge is
+  /// base64url in both directions, so we must not use `Data(base64Encoded:)`,
+  /// which only accepts standard base64.
+  init?(base64URLEncoded input: String) {
+    var s = input.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+    while s.count % 4 != 0 { s.append("=") }
+    self.init(base64Encoded: s)
   }
 }
