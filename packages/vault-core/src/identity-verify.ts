@@ -94,14 +94,18 @@ export async function verifyProposal(
     throw VaultError.of("ProtocolUnsupported", "identity record does not support this protocol version");
   }
 
-  // 3c. Revocation: a short-TTL status endpoint can revoke a key faster than the
-  //     cacheable record expires. Checked before we trust the delegation's key.
-  if (ctx.revocation && record.statusEndpoint) {
+  // 3c. Revocation. If the record declares a statusEndpoint it is asserting that
+  //     it has fast revocation and expects it honored — so FAIL CLOSED if we have
+  //     no checker to consult (do not silently skip). A checker that throws is
+  //     likewise treated as "cannot confirm".
+  if (record.statusEndpoint) {
+    if (!ctx.revocation) {
+      throw VaultError.of("IdentityUnverified", "identity declares a revocation endpoint but no checker is configured");
+    }
     let revoked = false;
     try {
       revoked = await ctx.revocation.isRevoked(record.statusEndpoint, params.delegation.keyId);
     } catch {
-      // A checker that throws is treated as "cannot confirm"; fail closed on connect.
       throw VaultError.of("IdentityUnverified", "revocation status could not be checked");
     }
     if (revoked) throw VaultError.of("IdentityUnverified", "identity key has been revoked");

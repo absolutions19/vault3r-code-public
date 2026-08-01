@@ -15,7 +15,7 @@ import { hchacha20, xchachaSeal, xchachaOpen } from "./xchacha.js";
 import { fromHex, toHex, fromBase64Url, toBase64Url, utf8ToBytes, timingSafeEqual } from "./encoding.js";
 import { deriveSessionKey, transcriptHash } from "./handshake.js";
 import { sealEnvelope, openEnvelope } from "./session-envelope.js";
-import type { EnvelopeAad } from "@vault/protocol";
+import { MAX_ENVELOPE_BYTES, MAX_PLAINTEXT_BYTES, type EnvelopeAad } from "@vault/protocol";
 
 describe("encoding", () => {
   it("base64url round-trips", () => {
@@ -210,5 +210,24 @@ describe("handshake + session envelope end to end", () => {
     const aad: EnvelopeAad = { topic: "t1", tag: "rpc", pv: "1", msgType: "rpc", dir: "c2v" };
     // A ~400 KB base64url string exceeds the MAX_ENVELOPE_BYTES (256 KiB) frame cap.
     expect(() => openEnvelope(k, aad, "A".repeat(400_000))).toThrow(/size cap/);
+  });
+
+  it("envelope frame cap boundary: MAX bytes not rejected by the size check, MAX+1 rejected", () => {
+    const k = randomBytes(32);
+    const aad: EnvelopeAad = { topic: "t1", tag: "rpc", pv: "1", msgType: "rpc", dir: "c2v" };
+    const atMax = toBase64Url(new Uint8Array(MAX_ENVELOPE_BYTES)); // decodes to exactly MAX
+    const overMax = toBase64Url(new Uint8Array(MAX_ENVELOPE_BYTES + 1)); // MAX + 1
+    // At the cap: passes the size gate, then fails later on authentication (not a size error).
+    expect(() => openEnvelope(k, aad, atMax)).toThrow(/authentication failed|too short|unsupported/);
+    // Over the cap: rejected by the size gate.
+    expect(() => openEnvelope(k, aad, overMax)).toThrow(/size cap/);
+  });
+
+  it("plaintext cap boundary: a body decrypting to > MAX_PLAINTEXT_BYTES is rejected", () => {
+    const k = randomBytes(32);
+    const aad: EnvelopeAad = { topic: "t1", tag: "rpc", pv: "1", msgType: "rpc", dir: "c2v" };
+    // A JSON string body just over the plaintext cap (still under the envelope cap).
+    const body = "y".repeat(MAX_PLAINTEXT_BYTES + 10);
+    expect(() => openEnvelope(k, aad, sealEnvelope(k, aad, body))).toThrow(/size cap/);
   });
 });

@@ -42,8 +42,11 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
     }
   };
 
+  // `depth` = number of containers already open above this value. A container at
+  // nesting level `depth+1` is rejected when that exceeds maxDepth, so a document
+  // with exactly maxDepth nested containers is accepted and maxDepth+1 is not —
+  // the same bound the engine's withinDepth() enforces on the stored doc.
   const parseValue = (depth: number): unknown => {
-    if (depth > maxDepth) err("maximum nesting depth exceeded");
     ws();
     if (i >= n) err("unexpected end of input");
     const c = text[i];
@@ -58,6 +61,8 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
   };
 
   const parseObject = (depth: number): Record<string, unknown> => {
+    const d = depth + 1;
+    if (d > maxDepth) err("maximum nesting depth exceeded");
     i++; // {
     const obj: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     const seen = new Set<string>();
@@ -72,7 +77,7 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
       ws();
       if (text[i] !== ":") err("expected ':'");
       i++;
-      obj[key] = parseValue(depth + 1);
+      obj[key] = parseValue(d);
       ws();
       const ch = text[i];
       if (ch === ",") {
@@ -88,12 +93,14 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
   };
 
   const parseArray = (depth: number): unknown[] => {
+    const d = depth + 1;
+    if (d > maxDepth) err("maximum nesting depth exceeded");
     i++; // [
     const arr: unknown[] = [];
     ws();
     if (text[i] === "]") return i++, arr;
     for (;;) {
-      arr.push(parseValue(depth + 1));
+      arr.push(parseValue(d));
       ws();
       const ch = text[i];
       if (ch === ",") {
@@ -182,7 +189,7 @@ export function parseJsonStrict(text: string, opts: StrictJsonOptions = {}): unk
     return num;
   };
 
-  const value = parseValue(1);
+  const value = parseValue(0);
   ws();
   if (i !== n) err("trailing content after JSON value");
   return value;

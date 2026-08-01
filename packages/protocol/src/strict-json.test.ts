@@ -23,6 +23,25 @@ describe("parseJsonStrict", () => {
     expect(parseJsonStrict("[[[[]]]]", { maxDepth: 8 })).toEqual([[[[]]]]);
   });
 
+  it("accepts EXACTLY maxDepth containers and rejects maxDepth+1", () => {
+    const nest = (d: number) => "[".repeat(d) + "]".repeat(d);
+    expect(() => parseJsonStrict(nest(8), { maxDepth: 8 })).not.toThrow(); // exactly 8
+    expect(() => parseJsonStrict(nest(9), { maxDepth: 8 })).toThrow(/nesting depth/); // 9
+    // objects count the same way
+    const objNest = (d: number) => '{"a":'.repeat(d) + "1" + "}".repeat(d);
+    expect(() => parseJsonStrict(objNest(8), { maxDepth: 8 })).not.toThrow();
+    expect(() => parseJsonStrict(objNest(9), { maxDepth: 8 })).toThrow(/nesting depth/);
+  });
+
+  it("treats escaped and unescaped keys as equal for duplicate detection", () => {
+    expect(() => parseJsonStrict('{"a":1,"\\u0061":2}')).toThrow(/duplicate object key/);
+  });
+
+  it("allows the same key name in DIFFERENT objects", () => {
+    expect(parseJsonStrict('{"a":{"x":1},"b":{"x":2}}')).toEqual({ a: { x: 1 }, b: { x: 2 } });
+    expect(parseJsonStrict('[{"x":1},{"x":2}]')).toEqual([{ x: 1 }, { x: 2 }]);
+  });
+
   it("rejects trailing content, control chars, and non-finite numbers", () => {
     expect(() => parseJsonStrict("{} garbage")).toThrow(/trailing content/);
     expect(() => parseJsonStrict('"ab"')).toThrow(/control character/);

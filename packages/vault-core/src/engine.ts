@@ -264,7 +264,13 @@ export class VaultEngine {
    * the session down.
    */
   private async enforceRevocation(session: Session, force: boolean): Promise<void> {
-    if (!this.revocation || !session.statusEndpoint || !session.identityKid) return;
+    // No pinned status endpoint => the identity opted out of fast revocation.
+    if (!session.statusEndpoint || !session.identityKid) return;
+    // A pinned endpoint with no checker must fail closed, not silently pass.
+    if (!this.revocation) {
+      this.sessions.delete(session.id);
+      throw VaultError.of("Disconnected", "revocation checker missing for a session that requires it");
+    }
     const now = this.clock.now();
     if (!force && now - session.lastRevocationCheckAt < this.revocationRecheckMs) return;
     let revoked: boolean;

@@ -72,10 +72,12 @@ export class RelayServer {
   }
 
   private onMessage(ws: WebSocket, data: RawData): void {
+    // Enforce the frame cap on RAW inbound bytes, before UTF-8 decoding or
+    // parsing (text.length is UTF-16 code units and would under-count multibyte).
+    if (rawByteLength(data) > this.maxPayload) return this.sendError(ws, undefined, 4330, "frame too large");
     let frame: RelayFrame;
     try {
       const text = typeof data === "string" ? data : data.toString("utf8");
-      if (text.length > this.maxPayload) return this.sendError(ws, undefined, 4330, "frame too large");
       frame = parseJsonStrict(text, { maxDepth: 8 }) as RelayFrame;
     } catch {
       return this.sendError(ws, undefined, 4010, "invalid frame");
@@ -178,4 +180,13 @@ export class RelayServer {
 /** Topics are opaque hex/base64url-ish identifiers; reject anything wild. */
 function isValidTopic(topic: string): boolean {
   return typeof topic === "string" && topic.length > 0 && topic.length <= 128 && /^[A-Za-z0-9_-]+$/.test(topic);
+}
+
+/** Byte length of a raw WebSocket frame across ws's possible data shapes. */
+function rawByteLength(data: RawData): number {
+  if (typeof data === "string") return Buffer.byteLength(data, "utf8");
+  if (Buffer.isBuffer(data)) return data.length;
+  if (Array.isArray(data)) return data.reduce((sum, b) => sum + b.length, 0);
+  if (data instanceof ArrayBuffer) return data.byteLength;
+  return Number.MAX_SAFE_INTEGER; // unknown shape -> reject
 }

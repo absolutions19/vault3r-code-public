@@ -61,6 +61,7 @@ class TestClient {
       Method.GetPermissions,
     ],
     keyStatus: "active" | "retired" | "revoked" = "active",
+    statusEndpoint: string | null = null,
   ) {
     this.domainKey = ed25519Generate();
     this.sessKey = ed25519Generate();
@@ -80,7 +81,7 @@ class TestClient {
             status: keyStatus,
           },
         ],
-        statusEndpoint: `https://${domain}/.well-known/vault-status`,
+        ...(statusEndpoint ? { statusEndpoint } : {}),
         methods,
         protocolVersions: [PROTOCOL_VERSION],
       },
@@ -195,6 +196,14 @@ class TestClient {
     for (const e of entries) values[e.path] = e.value;
     const s = this.signed("VaultWrite", sessionId, { changes });
     return makeRequest(this.nextNonce(), Method.SetData, { ...s, values });
+  }
+
+  patchMany(sessionId: string, entries: { path: string; value: unknown }[]) {
+    const changes = entries.map((e) => ({ op: "replace" as const, path: e.path, valueHash: hashJsonValue(e.value as never) }));
+    const values: Record<string, unknown> = {};
+    for (const e of entries) values[e.path] = e.value;
+    const s = this.signed("VaultPatch", sessionId, { changes });
+    return makeRequest(this.nextNonce(), Method.PatchData, { ...s, values });
   }
 
   extend(sessionId: string, requestedTtlMs: number) {
@@ -529,16 +538,64 @@ describe("VaultEngine — input hardening caps", () => {
     const r = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/deep", deep));
     expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
   });
+
+  it("op-count boundary: MAX_PATCH_OPS accepted and +1 rejected, via BOTH set and patch", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const entries = (n: number) => Array.from({ length: n }, (_, k) => ({ path: `/profile/k${k}`, value: k }));
+    expect("result" in (await engine.handleRequest(sessionId, alice.writeMany(sessionId, entries(128))))).toBe(true);
+    expect(failure(await engine.handleRequest(sessionId, alice.writeMany(sessionId, entries(129)))).error.code).toBe(ErrorCode.QuotaExceeded);
+    expect("result" in (await engine.handleRequest(sessionId, alice.patchMany(sessionId, entries(128))))).toBe(true);
+    expect(failure(await engine.handleRequest(sessionId, alice.patchMany(sessionId, entries(129)))).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("subscribe path-count boundary: MAX_PATHS_PER_REQUEST accepted and +1 rejected", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const paths = (n: number) => Array.from({ length: n }, () => "/profile");
+    expect("result" in (await engine.handleRequest(sessionId, alice.subscribe(sessionId, paths(64))))).toBe(true);
+    expect(failure(await engine.handleRequest(sessionId, alice.subscribe(sessionId, paths(65)))).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("measures the pointer cap in UTF-8 bytes (multibyte can't bypass it)", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    const path = "/" + "一".repeat(250); // 251 UTF-16 units but ~751 UTF-8 bytes > MAX_FIELD_PATH_LEN (512)
+    const r = await engine.handleRequest(sessionId, alice.getData(sessionId, [path]));
+    expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
+  });
+
+  it("a rejected over-limit write leaves the prior stored state unchanged", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", "keep-me"));
+    const rejected = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/blob", "x".repeat(70 * 1024)));
+    expect(failure(rejected).error.code).toBe(ErrorCode.QuotaExceeded);
+    const read = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/a"]));
+    expect((read as { result: { values: Record<string, unknown> } }).result.values["/profile/a"]).toBe("keep-me");
+  });
 });
 
 describe("VaultEngine — key revocation", () => {
+  const STATUS = "https://example.com/.well-known/vault-status";
   let resolver: StaticIdentityResolver;
   let alice: TestClient;
 
   beforeEach(() => {
     resolver = new StaticIdentityResolver();
-    alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    // Alice's record declares a revocation status endpoint.
+    alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }], undefined, "active", STATUS);
     resolver.set(alice.record);
+  });
+
+  it("FAILS CLOSED at connect when the record declares a statusEndpoint but no checker is configured", async () => {
+    const engine = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent: new AutoConsent(),
+      // no revocation checker
+      clock,
+    });
+    await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+    });
   });
 
   it("connects normally when the key is not revoked", async () => {
