@@ -14,11 +14,14 @@
     "check": "pnpm run typecheck && pnpm run test",
     "e2e": "vitest run tests/e2e",
     "relay": "tsx servers/relay/src/bin.ts",
-    "demo:signer": "tsx examples/demo-dapp/server.ts"
+    "demo:signer": "tsx examples/demo-dapp/server.ts",
+    "bundle:web": "node examples/demo-dapp/web/build.mjs",
+    "demo": "pnpm run bundle:web && tsx examples/demo-dapp/demo-server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.24.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"

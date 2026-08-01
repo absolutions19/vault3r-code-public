@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo dApp · VAULT</title>
+    <style>
+      :root { --bg:#0b0e13; --panel:#12161c; --line:#232a34; --ink:#e7ebf0; --muted:#9aa4b2; --accent:#2dd4bf; --ok:#4ade80; --warn:#fbbf24; --crit:#f87171; }
+      * { box-sizing: border-box; }
+      body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; line-height:1.5; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
+      h1 { font-size: 26px; letter-spacing:-0.02em; margin:0 0 4px; }
+      h1 .v { color: var(--accent); }
+      .sub { color: var(--muted); margin: 0 0 28px; }
+      .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+      @media (max-width:720px){ .grid { grid-template-columns: 1fr; } }
+      .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+      .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin:0 0 12px; }
+      label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+      input { width:100%; background:#0b0e13; border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:10px 12px; font-size:14px; }
+      button { background:var(--accent); color:#04211d; border:none; border-radius:10px; padding:12px 16px; font-weight:700; font-size:14px; cursor:pointer; margin-top:14px; }
+      button:disabled { opacity:.5; cursor:default; }
+      .status { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px; color:var(--muted); }
+      .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+      .dot.on { background:var(--ok); }
+      .code { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      .challenge { font-family: ui-monospace, Menlo, monospace; font-size:30px; font-weight:800; color:var(--accent); letter-spacing:4px; }
+      .uri { word-break:break-all; font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--muted); background:#0b0e13; border:1px solid var(--line); border-radius:8px; padding:10px; margin-top:8px; max-height:96px; overflow:auto; }
+      #log { margin-top:16px; background:#0b0e13; border:1px solid var(--line); border-radius:12px; padding:12px 14px; font-family:ui-monospace,Menlo,monospace; font-size:12.5px; height:260px; overflow:auto; }
+      .row { padding:2px 0; }
+      .row .t { color:#6f7885; }
+      .ok { color: var(--ok); } .info { color: var(--ink); } .note { color: var(--accent); } .err { color: var(--crit); }
+      .pill { display:inline-block; font-size:11px; font-family:ui-monospace,Menlo,monospace; color:var(--accent); border:1px solid var(--line); border-radius:999px; padding:2px 8px; }
+      .note-box { font-size:12px; color:var(--muted); margin-top:10px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Demo dApp <span class="v">→ VAULT</span></h1>
+      <p class="sub">A website using <span class="code">@vault/sdk</span> (bundled for the browser) to pair with a vault and read/write its own namespaced data — over the real relay and protocol.</p>
+
+      <div class="grid">
+        <div class="card">
+          <h2>1 · The app</h2>
+          <div class="status"><span class="dot" id="connDot"></span><span id="connText">not connected</span></div>
+          <div id="nsRow" style="margin-top:8px"></div>
+          <label for="name">Value to store at <span class="code">/profile/name</span></label>
+          <input id="name" value="Ada Lovelace" />
+          <button id="connectBtn">Connect vault &amp; round-trip data</button>
+          <p class="note-box">The vault here is a headless stand-in for the phone (it auto-approves and "scans" the code below). Only the device is simulated — the SDK, relay, delegation backend (CSRF + proof-of-possession), and protocol are all real.</p>
+        </div>
+
+        <div class="card">
+          <h2>2 · Pairing</h2>
+          <label>Number-match code (confirm on the vault)</label>
+          <div class="challenge" id="challenge">— — — —</div>
+          <label style="margin-top:14px">Pairing URI (the QR a real vault scans)</label>
+          <div class="uri" id="uri">generated on connect…</div>
+        </div>
+      </div>
+
+      <div id="log"></div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
