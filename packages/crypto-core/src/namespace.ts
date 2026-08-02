@@ -108,6 +108,19 @@ export const DWEB_SCHEMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Dweb schemes whose authority is case-INSENSITIVE — a name (`ens`) or a hex
+ * reference (`bzz`/`swarm` Swarm refs, `hyper` keys). Their authority is folded to
+ * lowercase so `bzz://DeadBEEF` and `bzz://deadbeef` share one namespace.
+ *
+ * Every other dweb scheme is treated as case-SENSITIVE and its authority is
+ * preserved verbatim, because its identifier alphabet is case-significant:
+ * `ipfs`/`ipns` (Base58btc CIDv0, Base36 libp2p keys), `ar` (Base64URL tx ids),
+ * `rad` (Base58btc `z…` RIDs). Folding those would collapse distinct identities
+ * into one namespace and break origin isolation.
+ */
+const CASE_INSENSITIVE_DWEB_SCHEMES: ReadonlySet<string> = new Set(["ens", "bzz", "swarm", "hyper"]);
+
+/**
  * Derive a namespace from an *origin*, for the trusted in-process host path
  * (browser Option B) where the caller's origin is supplied authoritatively by
  * the host process rather than proven over the relay.
@@ -159,9 +172,13 @@ export function deriveOriginNamespace(
   }
   if (!DWEB_SCHEMES.has(scheme)) throw new NamespaceError(`unsupported origin scheme: ${scheme}`);
   // A dweb origin must have a real scheme-relative authority (`scheme://authority`);
-  // opaque forms with no authority are ambiguous and rejected.
-  const authority = url.host.toLowerCase();
-  if (authority.length === 0) throw new NamespaceError(`dweb origin has no authority: ${origin}`);
+  // opaque forms with no authority are ambiguous and rejected. The WHATWG URL
+  // parser preserves case for non-special (dweb) authorities, so we only fold the
+  // schemes that are definitionally case-insensitive — content-address / key
+  // schemes keep their exact case so distinct identifiers never alias.
+  const rawAuthority = url.host;
+  if (rawAuthority.length === 0) throw new NamespaceError(`dweb origin has no authority: ${origin}`);
+  const authority = CASE_INSENSITIVE_DWEB_SCHEMES.has(scheme) ? rawAuthority.toLowerCase() : rawAuthority;
   const canonicalKey = `${scheme}:${authority}`;
   const namespace = `${NS_PREFIX_WEB}:dweb:${canonicalKey}` as Namespace;
   return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };

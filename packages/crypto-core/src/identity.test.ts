@@ -88,9 +88,20 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
     expect(deriveOriginNamespace("https://tenant1.saas.com", "host").namespace).toBe("web:tenant1.saas.com");
   });
   it("keys decentralized-web origins on the full canonical authority under web:dweb:", () => {
+    // Case-insensitive schemes (names / hex refs) fold to lowercase.
     expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:dweb:bzz:deadbeefcafe");
-    expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:dweb:ipfs:qmhash");
-    expect(deriveOriginNamespace("ens://myapp.eth").namespace).toBe("web:dweb:ens:myapp.eth");
+    expect(deriveOriginNamespace("ens://MyApp.eth").namespace).toBe("web:dweb:ens:myapp.eth");
+    // Case-sensitive content-address schemes preserve case verbatim.
+    expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:dweb:ipfs:QmHash");
+    expect(deriveOriginNamespace("ar://AbC-123").namespace).toBe("web:dweb:ar:AbC-123");
+  });
+  it("never aliases distinct case-sensitive dweb identifiers (isolation)", () => {
+    // IPFS CIDv0 (Base58btc), Arweave (Base64URL), Radicle (Base58 z-RID) are
+    // case-significant — two spellings must be two namespaces.
+    expect(deriveOriginNamespace("ipfs://QmAbc").namespace).not.toBe(deriveOriginNamespace("ipfs://Qmabc").namespace);
+    expect(deriveOriginNamespace("ar://Ab").namespace).not.toBe(deriveOriginNamespace("ar://ab").namespace);
+    expect(deriveOriginNamespace("rad://z6MkAbc").namespace).not.toBe(deriveOriginNamespace("rad://z6mkabc").namespace);
+    expect(deriveOriginNamespace("ipns://k51Xyz").namespace).not.toBe(deriveOriginNamespace("ipns://k51xyz").namespace);
   });
   it("never collides a dweb namespace with an http(s) registrable domain", () => {
     const web = deriveOriginNamespace("https://example.com").namespace;
