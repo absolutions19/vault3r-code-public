@@ -76,7 +76,9 @@ describe("namespace derivation", () => {
 describe("origin namespace derivation (trusted in-process host mode)", () => {
   it("reduces http(s) origins to the same web:<registrable-domain> as the relay path", () => {
     expect(deriveOriginNamespace("https://app.example.com").namespace).toBe("web:example.com");
-    expect(deriveOriginNamespace("http://example.com:8080/some/path").namespace).toBe("web:example.com");
+    expect(deriveOriginNamespace("https://example.com:8080").namespace).toBe("web:example.com");
+    // A bare origin with the URL parser's normalized root path is still accepted.
+    expect(deriveOriginNamespace("https://example.com/").namespace).toBe("web:example.com");
     // Identical to what deriveNamespace produces for the bare host.
     expect(deriveOriginNamespace("https://app.example.com").storageKey).toBe(
       deriveNamespace("example.com", "registrable-domain").storageKey,
@@ -88,6 +90,7 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
   it("keys decentralized-web origins on the full canonical authority under web:dweb:", () => {
     expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:dweb:bzz:deadbeefcafe");
     expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:dweb:ipfs:qmhash");
+    expect(deriveOriginNamespace("ens://myapp.eth").namespace).toBe("web:dweb:ens:myapp.eth");
   });
   it("never collides a dweb namespace with an http(s) registrable domain", () => {
     const web = deriveOriginNamespace("https://example.com").namespace;
@@ -95,8 +98,42 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
     expect(web).not.toBe(dweb);
     expect(deriveOriginNamespace("bzz://a").storageKey).not.toBe(deriveOriginNamespace("bzz://b").storageKey);
   });
-  it("rejects junk origins", () => {
+
+  // Adversarial: a crafted URL must not smuggle non-authoritative components past
+  // derivation, and only web / whitelisted-dweb schemes may mint a namespace.
+  it("rejects non-authoritative URL components (userinfo/path/query/fragment)", () => {
+    expect(() => deriveOriginNamespace("https://user:pass@example.com")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("https://evil.com@example.com")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("https://example.com/some/path")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("https://example.com?q=1")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("https://example.com#frag")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("bzz://root/deep/path")).toThrow(NamespaceError);
+  });
+  it("rejects unsupported / dangerous schemes", () => {
+    for (const bad of [
+      "file:///etc/passwd",
+      "data:text/html,hi",
+      "javascript:alert(1)",
+      "blob:https://example.com/uuid",
+      "about:blank",
+      "ws://example.com",
+      "chrome://settings",
+    ]) {
+      expect(() => deriveOriginNamespace(bad)).toThrow(NamespaceError);
+    }
+  });
+  it("rejects dweb origins with no real authority", () => {
+    expect(() => deriveOriginNamespace("bzz:opaque")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("ipfs:")).toThrow(NamespaceError);
+  });
+  it("rejects empty / junk origins", () => {
+    expect(() => deriveOriginNamespace("")).toThrow(NamespaceError);
+    expect(() => deriveOriginNamespace("   ")).toThrow(NamespaceError);
     expect(() => deriveOriginNamespace("not a url")).toThrow(NamespaceError);
+  });
+  it("is case-insensitive on host but preserves a single canonical key", () => {
+    expect(deriveOriginNamespace("https://EXAMPLE.com").namespace).toBe("web:example.com");
+    expect(deriveOriginNamespace("bzz://ABC").namespace).toBe(deriveOriginNamespace("bzz://abc").namespace);
   });
 });
 

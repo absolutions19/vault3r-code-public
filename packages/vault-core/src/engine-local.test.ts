@@ -176,10 +176,54 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     expect("error" in res).toBe(true);
   });
 
-  it("localRevoke ends the session", async () => {
+  it("localRevoke ends the session and every op then fails closed", async () => {
     const r = await engine.connectLocal({ origin: "https://bye.example", appMetadata: {}, requestedScopes: scopes() });
-    engine.localRevoke(r.sessionId);
+    await engine.localRevoke(r.sessionId);
     await expectCode(engine.localGet(r.sessionId, ["/profile"]), "Disconnected");
+    await expectCode(engine.localSet(r.sessionId, { "/profile/x": 1 }), "Disconnected");
+    await expectCode(engine.localPatch(r.sessionId, [{ op: "replace", path: "/profile/x", value: 1 }]), "Disconnected");
+    await expectCode(engine.localSubscribe(r.sessionId, ["/profile"]), "Disconnected");
+    await expectCode(engine.localGetPermissions(r.sessionId), "Disconnected");
+  });
+
+  it("gates localGetPermissions on the GetData/GetPermissions grant like the signed path", async () => {
+    // Grant excludes GetPermissions.
+    const narrowed = newEngine(
+      new AutoConsent(() => ({ approved: true, grantedMethods: [Method.GetData, Method.SetData] })),
+    );
+    const r = await narrowed.connectLocal({ origin: "https://gp.example", appMetadata: {}, requestedScopes: scopes() });
+    await expectCode(narrowed.localGetPermissions(r.sessionId), "Unauthorized");
+
+    // When granted, it returns the grant.
+    const full = await engine.connectLocal({ origin: "https://gp2.example", appMetadata: {}, requestedScopes: scopes() });
+    const perms = await engine.localGetPermissions(full.sessionId);
+    expect(perms.grant?.namespace).toBe("web:gp2.example");
+  });
+
+  it("always allows a session to revoke itself, even without the Revoke method", async () => {
+    // Read-only grant: no Revoke method. Self-revoke still works (mirrors signed skipMethodCheck).
+    const ro = newEngine(new AutoConsent(() => ({ approved: true, grantedMethods: [Method.GetData] })));
+    const r = await ro.connectLocal({ origin: "https://selfrevoke.example", appMetadata: {}, requestedScopes: scopes() });
+    await expect(ro.localRevoke(r.sessionId)).resolves.toEqual({ ok: true });
+    await expectCode(ro.localGet(r.sessionId, ["/profile"]), "Disconnected");
+  });
+
+  it("fails closed once a local session has expired", async () => {
+    let now = FIXED_NOW;
+    const mutable = new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-local" }),
+      storage: new InMemoryStorage(),
+      resolver: new StaticIdentityResolver(),
+      consent: new AutoConsent(),
+      clock: { now: () => now },
+      sessionTtlMs: 1_000,
+    });
+    const r = await mutable.connectLocal({ origin: "https://ttl.example", appMetadata: {}, requestedScopes: scopes() });
+    // Within TTL: fine.
+    await expect(mutable.localGet(r.sessionId, ["/profile"])).resolves.toBeTruthy();
+    // Past expiry: requireSession tears it down.
+    now = FIXED_NOW + 2_000;
+    await expectCode(mutable.localGet(r.sessionId, ["/profile"]), "Disconnected");
   });
 
   it("fails closed if the keystore cannot unlock", async () => {
@@ -210,7 +254,7 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     expect(params.changes["/profile/name"]).toBe("live");
 
     // After unsubscribe, no further deliveries.
-    engine.localUnsubscribe(r.sessionId, subscriptionId);
+    await engine.localUnsubscribe(r.sessionId, subscriptionId);
     await engine.localSet(r.sessionId, { "/profile/name": "silent" });
     expect(received.length).toBe(1);
   });

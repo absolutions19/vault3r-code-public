@@ -688,11 +688,20 @@ export class VaultEngine {
     return { sessionId, grant, namespace: derived.namespace };
   }
 
-  /** Resolve a trusted session, rejecting a signed session presented on the local path. */
-  private requireLocalSession(sessionId: string): Session {
+  /**
+   * Resolve a trusted session for a data-plane op, failing closed. `requireSession`
+   * already enforces session expiry and the absolute-lifetime cap; we additionally
+   * reject a signed session presented here, require the keystore to be unlocked, and
+   * run the same revocation check the signed path runs (a no-op unless the host
+   * pinned a status endpoint). Trusted-mode revocation is primarily host-driven:
+   * when the user revokes a site in the browser UI the host calls `adminRevoke` /
+   * `localRevoke` and drops the remembered grant, so the session ceases to exist.
+   */
+  private async requireLocalSession(sessionId: string): Promise<Session> {
     const session = this.requireSession(sessionId);
     if (!session.local) throw VaultError.of("Unauthorized", "not a trusted local session");
     if (!this.keystore.isUnlocked()) throw VaultError.of("VaultLocked");
+    await this.enforceRevocation(session, false);
     return session;
   }
 
@@ -703,7 +712,7 @@ export class VaultEngine {
   }
 
   async localGet(sessionId: string, paths: string[]): Promise<GetDataResult> {
-    const session = this.requireLocalSession(sessionId);
+    const session = await this.requireLocalSession(sessionId);
     this.assertLocalMethod(session, Method.GetData);
     if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many paths");
     for (const path of paths) {
@@ -729,7 +738,7 @@ export class VaultEngine {
     values: Record<string, unknown>,
     baseVersion?: string,
   ): Promise<SetDataResult> {
-    const session = this.requireLocalSession(sessionId);
+    const session = await this.requireLocalSession(sessionId);
     this.assertLocalMethod(session, Method.SetData);
     const changes: ChangeDescriptor[] = Object.keys(values).map((path) => ({ op: "replace", path }));
     const version = await this.applyChanges(session, changes, values, baseVersion);
@@ -741,7 +750,7 @@ export class VaultEngine {
     ops: LocalChange[],
     baseVersion?: string,
   ): Promise<PatchDataResult> {
-    const session = this.requireLocalSession(sessionId);
+    const session = await this.requireLocalSession(sessionId);
     this.assertLocalMethod(session, Method.PatchData);
     const values: Record<string, unknown> = {};
     const changes: ChangeDescriptor[] = ops.map((o) => {
@@ -753,7 +762,7 @@ export class VaultEngine {
   }
 
   async localSubscribe(sessionId: string, paths: string[]): Promise<SubscribeResult> {
-    const session = this.requireLocalSession(sessionId);
+    const session = await this.requireLocalSession(sessionId);
     this.assertLocalMethod(session, Method.Subscribe);
     if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many subscription paths");
     for (const path of paths) {
@@ -766,20 +775,27 @@ export class VaultEngine {
     return { subscriptionId };
   }
 
-  localUnsubscribe(sessionId: string, subscriptionId: string): UnsubscribeResult {
-    const session = this.requireLocalSession(sessionId);
+  // No method-grant check: unsubscribe is idempotent local cleanup that only
+  // removes a subscription this same session owns — the signed `unsubscribe`
+  // handler likewise performs no method/signature check.
+  async localUnsubscribe(sessionId: string, subscriptionId: string): Promise<UnsubscribeResult> {
+    const session = await this.requireLocalSession(sessionId);
     session.subscriptions.delete(subscriptionId);
     return { ok: true };
   }
 
-  localRevoke(sessionId: string): RevokeResult {
-    const session = this.requireLocalSession(sessionId);
+  // No method-grant check: a session revoking *itself* is always allowed, mirroring
+  // the signed `revoke` path (which authorizes with `skipMethodCheck: true`).
+  async localRevoke(sessionId: string): Promise<RevokeResult> {
+    const session = await this.requireLocalSession(sessionId);
     this.sessions.delete(session.id);
     return { ok: true };
   }
 
-  localGetPermissions(sessionId: string): GetPermissionsResult {
-    const session = this.requireLocalSession(sessionId);
+  async localGetPermissions(sessionId: string): Promise<GetPermissionsResult> {
+    const session = await this.requireLocalSession(sessionId);
+    // Method-gated to match the signed `getPermissions` handler (no skip there).
+    this.assertLocalMethod(session, Method.GetPermissions);
     return { grant: session.grant };
   }
 }

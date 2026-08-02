@@ -92,37 +92,76 @@ export function deriveNamespace(host: string, granularity: NamespaceGranularity)
 }
 
 /**
- * Derive a namespace from a full origin, for the trusted in-process host path
+ * The decentralized-web schemes the trusted host path recognizes. Anything else
+ * (`file:`, `data:`, `javascript:`, `blob:`, `about:`, `ws:`, …) is rejected so a
+ * non-web origin can never mint a namespace.
+ */
+export const DWEB_SCHEMES: ReadonlySet<string> = new Set([
+  "bzz",
+  "ipfs",
+  "ipns",
+  "hyper",
+  "ens",
+  "rad",
+  "swarm",
+  "ar",
+]);
+
+/**
+ * Derive a namespace from an *origin*, for the trusted in-process host path
  * (browser Option B) where the caller's origin is supplied authoritatively by
  * the host process rather than proven over the relay.
  *
+ * The input must be an origin — `scheme://host[:port]` — not a full URL: any
+ * userinfo, path, query, or fragment is rejected so two different display URLs
+ * for the same site cannot be steered to different (or, worse, to *another*
+ * site's) namespace. The scheme must be `http(s)` or a whitelisted dweb scheme.
+ *
  * - `http(s)` origins reduce to the SAME `web:<registrable-domain>` namespace the
  *   relay path derives, so a site's data is identical whether it connects through
- *   the browser or over the network.
- * - Decentralized-web origins (`bzz://`, `ipfs://`, `ipns://`, `hyper://`, …) have
- *   no DNS registrable domain, so they key on the full canonical `<scheme>:<host>`
- *   under a `web:dweb:` prefix. The `dweb:` infix carries a colon, which an eTLD+1
- *   never can, so a dweb namespace can never collide with an http(s) one.
+ *   the browser or over the network. Only the registrable domain of the host is
+ *   used; port and (rejected) path never affect the result.
+ * - Dweb origins (`bzz://`, `ipfs://`, `ipns://`, `hyper://`, `ens://`, `rad://`, …)
+ *   have no DNS registrable domain, so they key on the full canonical
+ *   `<scheme>:<authority>` under a `web:dweb:` prefix. The `dweb:` infix carries a
+ *   colon, which an eTLD+1 never can, so a dweb namespace can never collide with an
+ *   http(s) one.
  */
 export function deriveOriginNamespace(
   origin: string,
   granularity: NamespaceGranularity = "registrable-domain",
 ): DerivedNamespace {
+  if (typeof origin !== "string" || origin.trim().length === 0) {
+    throw new NamespaceError("empty origin");
+  }
   let url: URL;
   try {
     url = new URL(origin);
   } catch {
     throw new NamespaceError(`invalid origin: ${origin}`);
   }
+  // An origin carries no userinfo, query, or fragment — reject anything that does
+  // so a crafted URL cannot smuggle non-authoritative components past derivation.
+  if (url.username.length > 0 || url.password.length > 0) {
+    throw new NamespaceError("origin must not contain userinfo");
+  }
+  if (url.search.length > 0) throw new NamespaceError("origin must not contain a query");
+  if (url.hash.length > 0) throw new NamespaceError("origin must not contain a fragment");
+  // Only the root path is permitted (the URL parser normalizes a bare origin to
+  // "" or "/"); a real path is rejected.
+  if (url.pathname.length > 0 && url.pathname !== "/") {
+    throw new NamespaceError("origin must not contain a path");
+  }
+
   const scheme = url.protocol.replace(/:$/, "").toLowerCase();
   if (scheme === "http" || scheme === "https") {
     return deriveNamespace(url.hostname, granularity);
   }
-  // Custom dweb scheme: the host process is the trust boundary, so key on the
-  // full authority. `URL` parks a scheme-relative authority in `host`; some
-  // opaque schemes park it in `pathname` instead — fall back accordingly.
-  const authority = (url.host || url.pathname.replace(/^\/+/, "")).toLowerCase();
-  if (!authority) throw new NamespaceError(`origin has no authority: ${origin}`);
+  if (!DWEB_SCHEMES.has(scheme)) throw new NamespaceError(`unsupported origin scheme: ${scheme}`);
+  // A dweb origin must have a real scheme-relative authority (`scheme://authority`);
+  // opaque forms with no authority are ambiguous and rejected.
+  const authority = url.host.toLowerCase();
+  if (authority.length === 0) throw new NamespaceError(`dweb origin has no authority: ${origin}`);
   const canonicalKey = `${scheme}:${authority}`;
   const namespace = `${NS_PREFIX_WEB}:dweb:${canonicalKey}` as Namespace;
   return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
