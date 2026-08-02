@@ -9,7 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { deriveNamespace } from "@vault/crypto-core";
+import { deriveNamespace, storageKeyForNamespace } from "@vault/crypto-core";
 import {
   Method,
   MAX_PATHS_PER_REQUEST,
@@ -257,5 +257,64 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     await engine.localUnsubscribe(r.sessionId, subscriptionId);
     await engine.localSet(r.sessionId, { "/profile/name": "silent" });
     expect(received.length).toBe(1);
+  });
+});
+
+describe("VaultEngine — owner/admin plane (vault management UI)", () => {
+  let ks: InMemoryKeystore;
+  let engine: VaultEngine;
+
+  beforeEach(() => {
+    ks = new InMemoryKeystore({ vaultId: "vault-local" });
+    engine = new VaultEngine({
+      keystore: ks,
+      storage: new InMemoryStorage(),
+      resolver: new StaticIdentityResolver(),
+      consent: new AutoConsent(),
+      clock,
+    });
+  });
+
+  async function seed(origin: string, values: Record<string, unknown>) {
+    const r = await engine.connectLocal({ origin, appMetadata: {}, requestedScopes: scopes() });
+    await engine.localSet(r.sessionId, values);
+    return { sessionId: r.sessionId, namespace: r.namespace, storageKey: storageKeyForNamespace(r.namespace) };
+  }
+
+  it("adminReadPartition returns the owner's whole decrypted document", async () => {
+    const p = await seed("https://owned.example", { "/profile/name": "alice", "/profile/city": "NYC" });
+    const doc = (await engine.adminReadPartition(p.storageKey)) as Record<string, unknown>;
+    expect(doc).toEqual({ profile: { name: "alice", city: "NYC" } });
+  });
+
+  it("adminReadPartition is isolated per storage key", async () => {
+    const a = await seed("https://a.example", { "/profile/name": "A" });
+    const b = await seed("https://b.example", { "/profile/name": "B" });
+    expect(await engine.adminReadPartition(a.storageKey)).toEqual({ profile: { name: "A" } });
+    expect(await engine.adminReadPartition(b.storageKey)).toEqual({ profile: { name: "B" } });
+  });
+
+  it("adminReadPartition fails closed when the vault is locked", async () => {
+    const p = await seed("https://lock.example", { "/profile/name": "x" });
+    ks.lock();
+    await expectCode(engine.adminReadPartition(p.storageKey), "VaultLocked");
+  });
+
+  it("adminDeletePartition drops the data, clears the manifest (no rollback error), and allows a clean re-create", async () => {
+    const p = await seed("https://del.example", { "/profile/name": "gone" });
+    await engine.adminDeletePartition(p.storageKey);
+    // Anti-rollback would throw KeyInvalidated if the manifest still expected the blob;
+    // a clean read returns an empty doc instead.
+    expect(await engine.adminReadPartition(p.storageKey)).toEqual({});
+    // And the namespace can be used again from scratch.
+    const r2 = await engine.connectLocal({ origin: "https://del.example", appMetadata: {}, requestedScopes: scopes() });
+    await engine.localSet(r2.sessionId, { "/profile/name": "fresh" });
+    expect(await engine.adminReadPartition(p.storageKey)).toEqual({ profile: { name: "fresh" } });
+  });
+
+  it("adminDeletePartition tears down live sessions for that namespace", async () => {
+    const p = await seed("https://teardown.example", { "/profile/name": "x" });
+    await engine.adminDeletePartition(p.storageKey);
+    await expectCode(engine.localGet(p.sessionId, ["/profile/name"]), "Disconnected");
   });
 });

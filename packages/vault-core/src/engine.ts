@@ -156,6 +156,30 @@ export class VaultEngine {
     this.sessions.delete(sessionId);
   }
 
+  // --------------------------------------------------------------------------
+  // Owner / admin plane (vault management UI)
+  //
+  // These operate on a namespace's storageKey directly and INTENTIONALLY bypass
+  // the per-site grant model — they serve the vault OWNER managing their own data
+  // through a trusted management surface (the browser's wallet UI), never a
+  // website. They must never be reachable from a site's provider path.
+  // --------------------------------------------------------------------------
+
+  /** Owner view: decrypt and return a namespace's whole document. Requires unlock. */
+  async adminReadPartition(storageKey: string): Promise<Json> {
+    if (!this.keystore.isUnlocked()) throw VaultError.of("VaultLocked");
+    const { doc } = await this.docStore.load(storageKey);
+    return doc;
+  }
+
+  /** Owner delete: drop a namespace's data (anti-rollback-safe) + tear down its live sessions. */
+  async adminDeletePartition(storageKey: string): Promise<void> {
+    await this.docStore.deleteNamespace(storageKey);
+    for (const s of this.sessions.all()) {
+      if (s.storageKey === storageKey) this.sessions.delete(s.id);
+    }
+  }
+
   async unlock(): Promise<boolean> {
     return this.keystore.unlock({ reason: "unlock", prompt: "Unlock your vault" });
   }

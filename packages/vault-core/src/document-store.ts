@@ -86,4 +86,20 @@ export class DocumentStore {
     manifest[storageKey] = newVersion;
     await this.saveManifest(manifest);
   }
+
+  /**
+   * Owner-initiated deletion of a namespace's document. Removes the sealed blob
+   * AND clears its manifest entry, so the anti-rollback guard in `load` treats a
+   * later absence as "never existed" rather than a rollback/deletion attack. This
+   * is the ONLY legitimate way to drop a namespace; a bare `storage.delete` would
+   * leave the manifest expecting the blob and brick every future load.
+   */
+  async deleteNamespace(storageKey: string): Promise<void> {
+    await this.storage.delete(docStorageId(storageKey));
+    const manifest = await this.loadManifest();
+    if (storageKey in manifest) {
+      delete manifest[storageKey];
+      await this.saveManifest(manifest);
+    }
+  }
 }
