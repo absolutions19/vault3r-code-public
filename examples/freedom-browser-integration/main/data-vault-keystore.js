@@ -21,7 +21,7 @@
 const {
   hkdfSha256,
   sha256,
-  ed25519Generate, // not used for derivation; see deviceKey note below
+  ed25519PublicFromSeed,
   ed25519Sign,
   xchachaSeal,
   xchachaOpen,
@@ -88,7 +88,7 @@ class DataVaultKeystore {
       // Deterministic device key from the same seed (kept even though trusted mode
       // doesn't sign settle payloads — the adapter contract requires it).
       const deviceSeed = hkdfSha256(ikm, utf8ToBytes(DEK_SALT), utf8ToBytes(DEVICE_INFO), 32);
-      this._device = ed25519FromSeed(deviceSeed);
+      this._device = { privateKey: deviceSeed, publicKey: ed25519PublicFromSeed(deviceSeed) };
       const idBytes = hkdfSha256(ikm, utf8ToBytes(DEK_SALT), utf8ToBytes(VAULTID_INFO), 16);
       this._vaultId = 'fbvault_' + toHex(idBytes);
       this._fingerprint = fingerprint;
@@ -168,26 +168,5 @@ class DataVaultKeystore {
     return this._vaultId;
   }
 }
-
-/**
- * Build an Ed25519 keypair from a 32-byte seed. `@noble/curves` exposes
- * getPublicKey(seed); Vault3r re-exports its own generators, but for a
- * deterministic seed we call the primitive directly. Kept tiny + local so this
- * file has a single crypto dependency surface.
- * @param {Uint8Array} seed 32 bytes
- */
-function ed25519FromSeed(seed) {
-  // @vault/crypto-core exposes ed25519 via @noble/curves; if a seeded generator
-  // is available prefer it, else fall back to the noble ed25519 module the host
-  // already depends on. This indirection keeps the reference copy-pasteable.
-  // eslint-disable-next-line global-require
-  const { ed25519 } = require('@noble/curves/ed25519');
-  const privateKey = seed.slice(0, 32);
-  const publicKey = ed25519.getPublicKey(privateKey);
-  return { privateKey, publicKey };
-}
-
-// Silence the unused-import lint for ed25519Generate (kept for parity/reference).
-void ed25519Generate;
 
 module.exports = { DataVaultKeystore };
