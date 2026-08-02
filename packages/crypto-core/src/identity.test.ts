@@ -9,6 +9,7 @@ import {
 } from "./identity.js";
 import {
   deriveNamespace,
+  deriveOriginNamespace,
   normalizeHost,
   registrableDomain,
   isAuthoritativeForHost,
@@ -69,6 +70,33 @@ describe("namespace derivation", () => {
   });
   it("registrableDomain reduces subdomains", () => {
     expect(registrableDomain("a.b.example.co.uk")).toBe("example.co.uk");
+  });
+});
+
+describe("origin namespace derivation (trusted in-process host mode)", () => {
+  it("reduces http(s) origins to the same web:<registrable-domain> as the relay path", () => {
+    expect(deriveOriginNamespace("https://app.example.com").namespace).toBe("web:example.com");
+    expect(deriveOriginNamespace("http://example.com:8080/some/path").namespace).toBe("web:example.com");
+    // Identical to what deriveNamespace produces for the bare host.
+    expect(deriveOriginNamespace("https://app.example.com").storageKey).toBe(
+      deriveNamespace("example.com", "registrable-domain").storageKey,
+    );
+  });
+  it("honors host granularity for http(s) origins", () => {
+    expect(deriveOriginNamespace("https://tenant1.saas.com", "host").namespace).toBe("web:tenant1.saas.com");
+  });
+  it("keys decentralized-web origins on the full canonical authority under web:dweb:", () => {
+    expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:dweb:bzz:deadbeefcafe");
+    expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:dweb:ipfs:qmhash");
+  });
+  it("never collides a dweb namespace with an http(s) registrable domain", () => {
+    const web = deriveOriginNamespace("https://example.com").namespace;
+    const dweb = deriveOriginNamespace("ens://example.com").namespace;
+    expect(web).not.toBe(dweb);
+    expect(deriveOriginNamespace("bzz://a").storageKey).not.toBe(deriveOriginNamespace("bzz://b").storageKey);
+  });
+  it("rejects junk origins", () => {
+    expect(() => deriveOriginNamespace("not a url")).toThrow(NamespaceError);
   });
 });
 

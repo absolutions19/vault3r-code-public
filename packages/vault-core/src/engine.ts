@@ -39,6 +39,10 @@ import {
   type GetPermissionsParams,
   type GetPermissionsResult,
   type PermissionsChangedNotification,
+  type AppMetadata,
+  type RequestedScope,
+  type NamespaceGranularity,
+  type IdentityVerification,
   type FieldRule,
   type Grant,
   type JsonRpcRequest,
@@ -48,7 +52,7 @@ import {
   makeFailure,
 } from "@vault/protocol";
 import type { ChangeDescriptor, TypedData } from "@vault/protocol";
-import { deriveNamespace, hashJsonValue, randomBytes, toBase64Url, utf8ToBytes } from "@vault/crypto-core";
+import { deriveNamespace, deriveOriginNamespace, hashJsonValue, randomBytes, toBase64Url, utf8ToBytes } from "@vault/crypto-core";
 import { verifyTyped } from "@vault/crypto-core";
 import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, RevocationChecker, StorageAdapter } from "./adapters.js";
 import { systemClock } from "./adapters.js";
@@ -77,6 +81,29 @@ export interface VaultEngineConfig {
 export interface ProposeContext {
   responderPublicKey: string;
   pairingNonce: string;
+}
+
+/** Input for a trusted in-process connection (browser Option B). */
+export interface LocalConnectInput {
+  /** The caller's origin, supplied authoritatively by the host process. */
+  origin: string;
+  appMetadata: AppMetadata;
+  requestedScopes: RequestedScope[];
+  /** http(s) namespace granularity; ignored for dweb origins. Default registrable-domain. */
+  granularity?: NamespaceGranularity;
+}
+
+export interface LocalConnectResult {
+  sessionId: string;
+  grant: Grant;
+  namespace: string;
+}
+
+/** A change requested over the trusted data plane (no value-hash — the caller is trusted). */
+export interface LocalChange {
+  op: "add" | "replace" | "remove";
+  path: string;
+  value?: unknown;
 }
 
 /** Emits a JSON-RPC notification (subscription update or permissions_changed) to a session. */
@@ -563,6 +590,196 @@ export class VaultEngine {
   }
 
   private async getPermissions(session: Session, _params: GetPermissionsParams): Promise<GetPermissionsResult> {
+    return { grant: session.grant };
+  }
+
+  // --------------------------------------------------------------------------
+  // Trusted in-process host mode (browser Option B)
+  //
+  // When the engine is embedded in a host that supplies the caller's origin
+  // authoritatively (an Electron main process owning the webContents, a mobile
+  // WebView bridge), the transport IS the trust boundary. There is no relay, no
+  // `.well-known` identity proof, no delegation, and no per-request signature —
+  // so this path deliberately SKIPS `authorizeSigned`. It still enforces every
+  // property that protects the user's data: per-origin namespace isolation,
+  // explicit consent, per-field grants, the same document store, the same input
+  // caps, and subscriptions. The two trust models never cross: these methods
+  // operate only on `local === true` sessions and the signed handlers only on
+  // `local !== true` ones.
+  // --------------------------------------------------------------------------
+
+  /** Trusted connect: derive namespace from the host-attested origin, take consent, mint a session. */
+  async connectLocal(input: LocalConnectInput): Promise<LocalConnectResult> {
+    const now = this.clock.now();
+    const granularity = input.granularity ?? "registrable-domain";
+    const derived = deriveOriginNamespace(input.origin, granularity);
+
+    // No identity record exists in trusted mode, so every requested method is
+    // eligible; the user still gates it at the consent prompt below.
+    const requestedMethods = [...new Set(input.requestedScopes.flatMap((s) => s.methods))];
+    const requestedFields = normalizeFields(input.requestedScopes.flatMap((s) => s.fields));
+    if (requestedMethods.length === 0) throw VaultError.of("UnsupportedMethod", "no method requested");
+
+    const verification: IdentityVerification = {
+      ok: true,
+      tier: "verified",
+      namespace: derived.namespace,
+      domain: input.origin,
+      granularity,
+      identityKid: null,
+      homographFlag: false,
+      allowedMethods: requestedMethods,
+    };
+    const decision = await this.consent.requestConnect({
+      verification,
+      appMetadata: input.appMetadata,
+      requestedScopes: input.requestedScopes,
+      pairingChallenge: "",
+    });
+    if (!decision.approved) throw VaultError.of("UserRejected", decision.reason ?? "user declined");
+
+    // One unlock: the host unlocks the keystore once (password/biometric) and
+    // every trusted site rides it. If somehow locked, fail closed.
+    if (!this.keystore.isUnlocked() && !(await this.keystore.unlock())) throw VaultError.of("VaultLocked");
+
+    const grantedMethods = decision.grantedMethods ?? requestedMethods;
+    const grantedFields = normalizeFields(decision.grantedFields ?? requestedFields);
+    const writePolicy = decision.writePolicy ?? "ask-once-per-session";
+    const expiresAt = now + this.sessionTtlMs;
+    const grantId = this.randomId();
+
+    const grant: Grant = {
+      id: grantId,
+      namespace: derived.namespace,
+      domain: input.origin,
+      appMetadata: input.appMetadata,
+      verified: true,
+      methods: grantedMethods,
+      fields: grantedFields,
+      writePolicy,
+      createdAt: now,
+      expiresAt,
+      identityKid: null,
+    };
+
+    const sessionId = this.randomId();
+    const session: Session = {
+      id: sessionId,
+      namespace: derived.namespace,
+      storageKey: derived.storageKey,
+      grant,
+      delegatedKeyPub: "",
+      proposerPublicKey: "",
+      responderPublicKey: "",
+      deviceKeyPub: this.keystore.deviceKeyPublic(),
+      createdAt: now,
+      expiresAt,
+      statusEndpoint: null,
+      identityKid: null,
+      lastRevocationCheckAt: now,
+      writePolicy,
+      writeApprovedThisSession: false,
+      subscriptions: new Map(),
+      domain: input.origin,
+      verified: true,
+      local: true,
+    };
+    this.sessions.create(session);
+    return { sessionId, grant, namespace: derived.namespace };
+  }
+
+  /** Resolve a trusted session, rejecting a signed session presented on the local path. */
+  private requireLocalSession(sessionId: string): Session {
+    const session = this.requireSession(sessionId);
+    if (!session.local) throw VaultError.of("Unauthorized", "not a trusted local session");
+    if (!this.keystore.isUnlocked()) throw VaultError.of("VaultLocked");
+    return session;
+  }
+
+  private assertLocalMethod(session: Session, method: string): void {
+    if (!session.grant.methods.includes(method)) {
+      throw VaultError.of("Unauthorized", `method not granted: ${method}`);
+    }
+  }
+
+  async localGet(sessionId: string, paths: string[]): Promise<GetDataResult> {
+    const session = this.requireLocalSession(sessionId);
+    this.assertLocalMethod(session, Method.GetData);
+    if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many paths");
+    for (const path of paths) {
+      if (!fieldAllows(session.grant.fields, path, "read")) {
+        throw VaultError.of("FieldOutOfScope", `read not granted: ${path}`);
+      }
+      if (pathIsSensitive(session.grant.fields, path)) {
+        const ok = await this.keystore.authenticate({ reason: "sensitive-read", prompt: `Read ${path}` });
+        if (!ok) throw VaultError.of("BiometricFailed");
+      }
+    }
+    const { doc, version } = await this.docStore.load(session.storageKey);
+    const values: Record<string, unknown> = {};
+    for (const path of paths) {
+      const got = pointerGet(doc, path);
+      values[path] = got === undefined ? null : got;
+    }
+    return { values, version: versionToEtag(version) };
+  }
+
+  async localSet(
+    sessionId: string,
+    values: Record<string, unknown>,
+    baseVersion?: string,
+  ): Promise<SetDataResult> {
+    const session = this.requireLocalSession(sessionId);
+    this.assertLocalMethod(session, Method.SetData);
+    const changes: ChangeDescriptor[] = Object.keys(values).map((path) => ({ op: "replace", path }));
+    const version = await this.applyChanges(session, changes, values, baseVersion);
+    return { applied: true, version: versionToEtag(version) };
+  }
+
+  async localPatch(
+    sessionId: string,
+    ops: LocalChange[],
+    baseVersion?: string,
+  ): Promise<PatchDataResult> {
+    const session = this.requireLocalSession(sessionId);
+    this.assertLocalMethod(session, Method.PatchData);
+    const values: Record<string, unknown> = {};
+    const changes: ChangeDescriptor[] = ops.map((o) => {
+      if (o.op !== "remove") values[o.path] = o.value;
+      return { op: o.op, path: o.path };
+    });
+    const version = await this.applyChanges(session, changes, values, baseVersion);
+    return { applied: true, version: versionToEtag(version) };
+  }
+
+  async localSubscribe(sessionId: string, paths: string[]): Promise<SubscribeResult> {
+    const session = this.requireLocalSession(sessionId);
+    this.assertLocalMethod(session, Method.Subscribe);
+    if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many subscription paths");
+    for (const path of paths) {
+      if (!fieldAllows(session.grant.fields, path, "read")) {
+        throw VaultError.of("FieldOutOfScope", `read not granted: ${path}`);
+      }
+    }
+    const subscriptionId = this.randomId();
+    session.subscriptions.set(subscriptionId, { id: subscriptionId, paths });
+    return { subscriptionId };
+  }
+
+  localUnsubscribe(sessionId: string, subscriptionId: string): UnsubscribeResult {
+    const session = this.requireLocalSession(sessionId);
+    session.subscriptions.delete(subscriptionId);
+    return { ok: true };
+  }
+
+  localRevoke(sessionId: string): RevokeResult {
+    const session = this.requireLocalSession(sessionId);
+    this.sessions.delete(session.id);
+    return { ok: true };
+  }
+
+  localGetPermissions(sessionId: string): GetPermissionsResult {
+    const session = this.requireLocalSession(sessionId);
     return { grant: session.grant };
   }
 }

@@ -10,12 +10,16 @@ The headline guarantee: **a site can only ever touch the namespace derived from
 its own cryptographically verified identity — cross-namespace access is
 structurally unrepresentable, not merely checked.**
 
-> Status (v0.2.2, Forge-approved): the security core is complete and tested (158 passing tests,
+> Status (v0.3.0, Forge-approved): the security core is complete and tested (175 passing tests,
 > crypto cross-verified against `@noble/ciphers`). The crypto core is now pure JS
 > and runs in the browser; a **browser SDK bundle + static demo page** lets a
 > webpage pair with a vault, and **Argon2id + BIP-39 recovery** of the DEK is
-> implemented and proven in JS. The React Native app is a working scaffold; the
-> native Secure Enclave / Android Keystore key-unwrap is stubbed and flagged
+> implemented and proven in JS. v0.3.0 adds a **trusted in-process host mode**
+> (`connectLocal` + a `local*` data plane) so an embedding host — e.g. a browser
+> that owns the caller's origin — can host the vault without the relay, identity
+> proof, or per-request signatures, while keeping per-origin isolation, consent,
+> per-field grants, and the input caps. The React Native app is a working scaffold;
+> the native Secure Enclave / Android Keystore key-unwrap is stubbed and flagged
 > in-code (it needs a physical device to build). See [per-milestone status](#status).
 
 ## Monorepo layout
@@ -34,7 +38,7 @@ structurally unrepresentable, not merely checked.**
 
 ```bash
 pnpm install
-pnpm test          # 158 tests across all packages
+pnpm test          # 175 tests across all packages
 pnpm typecheck     # strict TS across all packages (excluding the RN app)
 pnpm relay         # run the dev relay on ws://127.0.0.1:4000
 pnpm demo:signer   # run the reference delegation backend on :4100
@@ -83,6 +87,7 @@ the wire reference.
 | v0.2.0 Argon2id + BIP-39 recovery (crypto-core) | ✅ tested |
 | v0.2.0 session-extend caps + subscription re-auth | ✅ tested |
 | v0.2.2 input hardening (strict JSON parser, DoS caps, revocation TOCTOU, proto-pollution) | ✅ tested (red-team + Forge) |
+| v0.3.0 trusted in-process host mode (`connectLocal` + `local*` data plane; origin→namespace, incl. dweb) | ✅ tested (isolation, per-field grants, method gating, caps, subscriptions) |
 
 ## Limitations (honest)
 

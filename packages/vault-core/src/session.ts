@@ -30,6 +30,9 @@ export interface Session {
   subscriptions: Map<string, Subscription>;
   domain: string | null;
   verified: boolean;
+  /** True for a trusted in-process host session (browser Option B): origin is
+   *  supplied authoritatively by the host, so there is no signed request path. */
+  local?: boolean;
 }
 
 export class SessionStore {

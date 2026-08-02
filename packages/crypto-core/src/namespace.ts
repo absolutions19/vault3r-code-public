@@ -71,6 +71,11 @@ export interface DerivedNamespace {
   storageKey: string; // hex sha256 of the namespace string
 }
 
+/** The on-disk key for a namespace: hex SHA-256 of the namespace string. */
+export function storageKeyForNamespace(namespace: string): string {
+  return toHex(sha256(utf8ToBytes(namespace)));
+}
+
 /** Derive the namespace for a verified host at the given granularity. */
 export function deriveNamespace(host: string, granularity: NamespaceGranularity): DerivedNamespace {
   const canonicalHost = normalizeHost(host);
@@ -83,8 +88,44 @@ export function deriveNamespace(host: string, granularity: NamespaceGranularity)
     canonicalKey = reg;
   }
   const namespace = `${NS_PREFIX_WEB}:${canonicalKey}` as Namespace;
-  const storageKey = toHex(sha256(utf8ToBytes(namespace)));
-  return { namespace, canonicalKey, storageKey };
+  return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
+}
+
+/**
+ * Derive a namespace from a full origin, for the trusted in-process host path
+ * (browser Option B) where the caller's origin is supplied authoritatively by
+ * the host process rather than proven over the relay.
+ *
+ * - `http(s)` origins reduce to the SAME `web:<registrable-domain>` namespace the
+ *   relay path derives, so a site's data is identical whether it connects through
+ *   the browser or over the network.
+ * - Decentralized-web origins (`bzz://`, `ipfs://`, `ipns://`, `hyper://`, …) have
+ *   no DNS registrable domain, so they key on the full canonical `<scheme>:<host>`
+ *   under a `web:dweb:` prefix. The `dweb:` infix carries a colon, which an eTLD+1
+ *   never can, so a dweb namespace can never collide with an http(s) one.
+ */
+export function deriveOriginNamespace(
+  origin: string,
+  granularity: NamespaceGranularity = "registrable-domain",
+): DerivedNamespace {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    throw new NamespaceError(`invalid origin: ${origin}`);
+  }
+  const scheme = url.protocol.replace(/:$/, "").toLowerCase();
+  if (scheme === "http" || scheme === "https") {
+    return deriveNamespace(url.hostname, granularity);
+  }
+  // Custom dweb scheme: the host process is the trust boundary, so key on the
+  // full authority. `URL` parks a scheme-relative authority in `host`; some
+  // opaque schemes park it in `pathname` instead — fall back accordingly.
+  const authority = (url.host || url.pathname.replace(/^\/+/, "")).toLowerCase();
+  if (!authority) throw new NamespaceError(`origin has no authority: ${origin}`);
+  const canonicalKey = `${scheme}:${authority}`;
+  const namespace = `${NS_PREFIX_WEB}:dweb:${canonicalKey}` as Namespace;
+  return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
 }
 
 // ---------------------------------------------------------------------------
