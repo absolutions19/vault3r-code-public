@@ -115,6 +115,23 @@ const { subscriptionId } = await window.vault.subscribe(sessionId, ['/profile'])
 window.vault.on('change', (u) => console.log('changed', u.changes));
 ```
 
+## Testing (before wiring into the browser)
+
+A headless smoke test drives the **actual** glue (manager + keystore + storage +
+permissions) end-to-end against the engine — no Electron, no GUI — with fakes for
+only the two Electron touchpoints (the identity-vault bridge and `webContents`):
+
+```bash
+npx tsx examples/freedom-browser-integration/test/glue-smoke.cjs
+```
+
+It exercises: origin→namespace, consent + per-field grants, real sealing to disk
+(asserts the on-disk blob is ciphertext, not plaintext), per-field enforcement,
+subscriptions, per-origin **isolation**, **session/tab binding** (one page can't
+use another's `sessionId`), dweb namespaces, remembered grants (no re-prompt),
+export/import round-trip, and revoke/locked **fail-closed** — 22 checks. Run it
+after any change to the glue.
+
 ## Naming
 
 The browser already has an **identity vault** (the mnemonic store,

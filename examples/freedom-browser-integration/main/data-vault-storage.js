@@ -7,8 +7,10 @@
  * layers version + manifest checks on top; this adapter only moves bytes.
  *
  * REFERENCE glue for `solardev-xyz/freedom-browser` — copy into `src/main/`.
- * Storage keys are hex SHA-256 (see deriveOriginNamespace), so they are safe
- * filenames; we still guard against path traversal defensively.
+ * The engine chooses its own storage keys (`manifest`, `doc:<hex>`), so keys are
+ * NOT all bare hex. We map each key to a filesystem-safe filename with a
+ * reversible encoding (percent-encoding), so `listKeys` can recover the exact
+ * key, and guard against path traversal defensively.
  */
 
 const fs = require('fs');
@@ -27,13 +29,14 @@ class DataVaultStorage {
     }
   }
 
-  /** @private Resolve a storage key to a file path, rejecting anything non-hex. */
+  /** @private Resolve a storage key to a file path via a reversible safe encoding. */
   _pathFor(key) {
-    if (typeof key !== 'string' || !/^[0-9a-f]{1,128}$/.test(key)) {
+    if (typeof key !== 'string' || key.length === 0 || key.length > 512) {
       throw new Error(`[DataVaultStorage] invalid storage key: ${key}`);
     }
-    const p = path.join(this._root, `${key}.bin`);
-    // Defense-in-depth: the resolved path must stay inside the root.
+    // encodeURIComponent yields only [A-Za-z0-9-_.!~*'()%] — no '/', no '\', no
+    // ':' — so the basename can never contain a path separator or traverse out.
+    const p = path.join(this._root, `${encodeURIComponent(key)}.bin`);
     if (path.dirname(p) !== this._root) {
       throw new Error('[DataVaultStorage] path traversal blocked');
     }
@@ -76,7 +79,7 @@ class DataVaultStorage {
     const entries = await fs.promises.readdir(this._root).catch(() => []);
     return entries
       .filter((f) => f.endsWith('.bin'))
-      .map((f) => f.slice(0, -4))
+      .map((f) => decodeURIComponent(f.slice(0, -4)))
       .filter((k) => k.startsWith(prefix));
   }
 }
