@@ -54,8 +54,44 @@ request against it fails.
 | `main/vault-ipc-channels.js` | merge into `src/shared/ipc-channels.js` | Channel names — site-facing `vault:*` + owner-facing `datavault:*`. |
 | `preload-additions.js` | splice into `src/main/webview-preload.js` | The page↔main bridge for the site provider (mirrors the ethereum/swarm bridges). |
 | `preload-main-additions.js` | splice into `src/main/preload.js` | The **owner** bridge — `window.vaultData` for the "Data" management pane. |
+| `renderer/vault-data.js` | `src/renderer/lib/wallet/` | The "Data" pane submodule — list / detail / consent-request views. |
+| `renderer/vault-data.css` | `src/renderer/styles/` (+ `@import`) | Pane styles, using the existing sidebar tokens. |
+| `renderer/index-snippets.html` | splice into `src/renderer/index.html` | The tab button + `#tab-data` panel markup, and the wallet-ui wiring notes. |
 
-**Owner "Data" pane API** (`window.vaultData`, main-window only — never exposed to sites): `listPartitions()`, `getUsage()`, `getPartitionData(namespace)`, `deletePartition(namespace)`, `clearAll()`, `exportVault()`. Backed by an owner/admin plane in the engine (`adminReadPartition` / `adminDeletePartition`) that bypasses per-site grants **by design** — it's the vault owner viewing their own data through the trusted UI.
+## The "Data" management pane
+
+A fourth wallet tab (**Data**) lets the vault owner see and control every site's
+storage — mirroring freedom-browser's own vanilla-JS list/subscreen patterns.
+
+- **List** — every site with a partition, its on-disk (sealed) size, and total usage.
+- **View** — click a site to see its decrypted stored JSON (requires the vault unlocked).
+- **Delete / Clear all** — drop one site or everything (data + manifest + grant + live sessions).
+- **Export** — write the sealed bundle to a file.
+
+`window.vaultData` (main-window only — never exposed to sites): `listPartitions()`,
+`getUsage()`, `getPartitionData(namespace)`, `deletePartition(namespace)`,
+`clearAll()`, `exportVault()`. Backed by an owner/admin plane in the engine
+(`adminReadPartition` / `adminDeletePartition`) that bypasses per-site grants **by
+design** — it's the owner viewing their own data through the trusted UI.
+
+### Per-field consent in the Data tab
+
+When a site calls `window.vault.connect(...)` for the first time, the manager's
+`promptConsent` seam surfaces the request **in the Data tab**: it opens the
+sidebar, switches to Data, and shows the requested fields as **per-field read/write
+toggles** with Allow/Deny. Whatever the user leaves enabled *is* the grant (they
+can downgrade or drop fields); Deny rejects the site's `connect()`. The host wires
+`promptConsent` as a round-trip to the renderer:
+
+```
+site connect → manager.promptConsent(req)
+   → main sends 'datavault:consent-request' to the wallet window (window.vaultData.onConsentRequest)
+   → Data tab renders per-field toggles → user Allow/Deny
+   → 'datavault:consent-response' → promptConsent resolves → grant persists → connect() resolves
+```
+
+Returning sites whose remembered grant already covers the request reconnect
+silently (no prompt).
 
 ## Wiring (main process, `src/main/index.js`)
 

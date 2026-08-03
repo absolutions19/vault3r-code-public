@@ -1,0 +1,84 @@
+<!--
+  Markup snippets for the "Data" pane. These are REFERENCE fragments to splice
+  into freedom-browser's src/renderer/index.html (they are not a standalone page).
+  Tabs there are pure convention: a `data-tab="X"` button + a `<div id="tab-X">`
+  panel; the existing switchTab() picks it up by id, no JS change needed for the
+  switch itself.
+-->
+
+<!-- 1) Add the tab button inside `.sidebar-tabs`, after the Nodes button: -->
+<button type="button" class="sidebar-tab" data-tab="data">Data</button>
+
+<!-- 2) Add this panel as a sibling of #tab-wallet / #tab-nodes / #tab-settings
+        (e.g. immediately before #tab-settings), inside #sidebar-identity: -->
+<div id="tab-data" class="tab-panel hidden">
+  <!-- LIST VIEW -->
+  <div id="vault-list-view">
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <span class="sidebar-section-title">Your data vault</span>
+      </div>
+      <div class="vault-usage">
+        <div class="vault-usage-bar"><div id="vault-usage-bar-fill" class="vault-usage-bar-fill"></div></div>
+        <div id="vault-usage-text" class="vault-usage-text">—</div>
+      </div>
+      <div class="vault-actions">
+        <button type="button" id="vault-export-btn" class="vault-btn">Export vault</button>
+        <button type="button" id="vault-clear-btn" class="vault-btn danger">Clear all data</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <span class="sidebar-section-title">Sites with data</span>
+      </div>
+      <div id="vault-partition-list" class="vault-list">
+        <div class="vault-empty">No sites have stored data yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL VIEW (one site's stored data) -->
+  <div id="vault-detail-view" class="hidden">
+    <div class="subscreen-header">
+      <button type="button" class="subscreen-back-btn" id="vault-detail-back">‹ Back</button>
+      <h3 class="subscreen-title" id="vault-detail-title">site</h3>
+    </div>
+    <div class="vault-detail-body">
+      <div class="vault-detail-ns" id="vault-detail-ns"></div>
+      <div class="vault-detail-fields" id="vault-detail-fields"></div>
+      <div class="sidebar-section-header"><span class="sidebar-section-title">Stored data</span></div>
+      <pre id="vault-detail-json" class="vault-json"></pre>
+      <button type="button" id="vault-detail-delete" class="vault-btn danger full">Delete this site’s data</button>
+    </div>
+  </div>
+
+  <!-- REQUEST VIEW (a site is asking for access — the consent prompt) -->
+  <div id="vault-request-view" class="hidden">
+    <div class="vault-request">
+      <div class="vault-request-head">
+        <div class="vault-request-app" id="vault-request-app">A website</div>
+        <div class="vault-request-origin" id="vault-request-origin"></div>
+      </div>
+      <div class="vault-request-sub">wants access to your vault. Choose what to allow:</div>
+      <div id="vault-request-fields" class="vault-request-fields"></div>
+      <div class="vault-request-actions">
+        <button type="button" id="vault-request-deny" class="vault-btn">Deny</button>
+        <button type="button" id="vault-request-allow" class="vault-btn primary">Allow</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!--
+  3) In src/renderer/lib/wallet-ui.js:
+       import { initVaultData } from './wallet/vault-data.js';
+     …then in initWalletUi(), capture the api and pass an opener:
+       const vaultDataApi = initVaultData({
+         openAndFocus: () => { openSidebarPanel(); switchTab('data'); },
+       });
+     …and in the tab-click handler, refresh on activation:
+       if (tabName === 'data' && vaultDataApi) vaultDataApi.refresh();
+
+  4) In src/renderer/styles.css: `@import './styles/vault-data.css';` (after sidebar.css).
+  5) In src/main/preload.js: add the `window.vaultData` bridge (see preload-main-additions.js).
+-->

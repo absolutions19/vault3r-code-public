@@ -10,7 +10,7 @@ The headline guarantee: **a site can only ever touch the namespace derived from
 its own cryptographically verified identity — cross-namespace access is
 structurally unrepresentable, not merely checked.**
 
-> Status (v0.3.1, Forge-approved): the security core is complete and tested (183 passing tests,
+> Status (v0.4.0): the security core is complete and tested (188 passing tests,
 > crypto cross-verified against `@noble/ciphers`). The crypto core is now pure JS
 > and runs in the browser; a **browser SDK bundle + static demo page** lets a
 > webpage pair with a vault, and **Argon2id + BIP-39 recovery** of the DEK is
@@ -38,7 +38,7 @@ structurally unrepresentable, not merely checked.**
 
 ```bash
 pnpm install
-pnpm test          # 183 tests across all packages
+pnpm test          # 188 tests across all packages
 pnpm typecheck     # strict TS across all packages (excluding the RN app)
 pnpm relay         # run the dev relay on ws://127.0.0.1:4000
 pnpm demo:signer   # run the reference delegation backend on :4100
@@ -89,6 +89,7 @@ the wire reference.
 | v0.2.2 input hardening (strict JSON parser, DoS caps, revocation TOCTOU, proto-pollution) | ✅ tested (red-team + Forge) |
 | v0.3.0 trusted in-process host mode (`connectLocal` + `local*` data plane; origin→namespace, incl. dweb) | ✅ tested (isolation, per-field grants, method gating, caps, subscriptions) |
 | v0.3.1 Freedom Browser reference glue ([`examples/freedom-browser-integration`](examples/freedom-browser-integration)) | ✅ headless smoke (22 checks) + validated live in Electron (`window.vault`, 9/9, sealed to disk) |
+| v0.4.0 owner/admin plane + browser "Data" management pane (list · view · delete · clear · export · per-field consent) | ✅ engine tested (+5) + glue smoke (32 checks) + live in Electron |
 
 ## Limitations (honest)
 

@@ -1,0 +1,149 @@
+/* "Data" pane — VAULT (data vault) management. Uses existing sidebar tokens. */
+
+/* Match the standard tab padding + scroll used by #tab-nodes / #tab-settings. */
+#tab-data {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+#tab-data::-webkit-scrollbar { width: 8px; }
+#tab-data::-webkit-scrollbar-track { background: transparent; }
+#tab-data::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 4px; }
+#tab-data::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+
+.vault-usage { margin: 6px 0 12px; }
+.vault-usage-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.vault-usage-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.vault-usage-text {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.vault-actions { display: flex; gap: 8px; margin-top: 10px; }
+.vault-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.vault-btn:hover { border-color: var(--accent); }
+.vault-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.vault-btn.full { width: 100%; margin-top: 14px; }
+.vault-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.vault-btn.primary:hover { filter: brightness(1.08); }
+
+/* Consent request view */
+.vault-request-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.vault-request-app { font-size: 16px; font-weight: 700; color: var(--text); }
+.vault-request-origin {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--accent);
+  word-break: break-all;
+}
+.vault-request-sub { font-size: 13px; color: var(--muted); margin: 8px 0 14px; }
+.vault-request-fields { display: flex; flex-direction: column; gap: 8px; }
+.vault-req-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.vault-req-path {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-req-tog { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.vault-req-tog input { accent-color: var(--accent); }
+.vault-request-actions { display: flex; gap: 8px; margin-top: 16px; }
+.vault-request-actions .vault-btn { flex: 1; padding: 10px; }
+
+.vault-list { display: flex; flex-direction: column; gap: 6px; }
+.vault-empty { color: var(--muted); font-size: 13px; padding: 10px 4px; }
+
+.vault-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.vault-row:hover { border-color: var(--accent); }
+.vault-row-info { flex: 1; cursor: pointer; min-width: 0; }
+.vault-row-host {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-row-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.vault-row-delete {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 14px;
+  padding: 4px;
+}
+.vault-row-delete:hover { opacity: 1; }
+
+.vault-detail-body { padding: 4px; }
+.vault-detail-ns {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+.vault-detail-fields { margin-bottom: 12px; }
+.vault-pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  margin: 0 4px 4px 0;
+}
+.vault-pill.rw { color: var(--secure-fg); }
+.vault-pill.ro { color: var(--warning-fg); }
+
+.vault-json {
+  background: var(--toolbar);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

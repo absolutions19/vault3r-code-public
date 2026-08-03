@@ -28,4 +28,13 @@ contextBridge.exposeInMainWorld('vaultData', {
   clearAll: () => ipcRenderer.invoke('datavault:clear-all'),
   /** { saved, path?, canceled? } — main shows the save dialog */
   exportVault: () => ipcRenderer.invoke('datavault:export'),
+
+  // Consent flow — a site is asking for access. Main pushes a request; the "Data"
+  // pane renders per-field toggles and responds with the user's decision.
+  /** cb({ id, origin, namespace, appMetadata, requestedScopes }) */
+  onConsentRequest: (cb) => ipcRenderer.on('datavault:consent-request', (_e, req) => cb(req)),
+  /** decision: { approved, grantedMethods?, grantedFields?, writePolicy?, reason? } */
+  respondConsent: (id, decision) => ipcRenderer.send('datavault:consent-response', { id, decision }),
+  /** Register this window as the consent target (also solves the boot race). */
+  signalReady: () => ipcRenderer.send('datavault:ui-ready'),
 });
