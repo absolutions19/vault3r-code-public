@@ -21,8 +21,16 @@ module.exports = {
   // Management (browser settings UI -> main).
   VAULT_GET_ALL_PERMISSIONS: 'vault:get-all-permissions',
   VAULT_REVOKE_PERMISSION: 'vault:revoke-permission',
-  VAULT_EXPORT: 'vault:export', // integration decision #5
   VAULT_IMPORT: 'vault:import',
+
+  // Owner-facing "Data" pane (trusted wallet UI only). Distinct `datavault:`
+  // prefix so these can never be confused with the site-facing provider path.
+  VAULT_LIST_PARTITIONS: 'datavault:list-partitions',
+  VAULT_USAGE: 'datavault:usage',
+  VAULT_GET_PARTITION_DATA: 'datavault:get-partition-data',
+  VAULT_DELETE_PARTITION: 'datavault:delete-partition',
+  VAULT_CLEAR_ALL: 'datavault:clear-all',
+  VAULT_EXPORT: 'datavault:export', // integration decision #5
 
   // Preload bootstrap (sync): fetch the window.vault inject source.
   VAULT_GET_INJECT_SOURCE: 'internal:get-vault-inject-source',

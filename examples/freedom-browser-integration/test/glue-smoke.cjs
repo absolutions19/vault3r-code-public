@@ -45,9 +45,14 @@ const ALIASES = {
 // (webContents.fromId(...).send(...)) actually delivers subscription events.
 const wcRegistry = new Map();
 const capturedEvents = [];
+let saveDialogPath = null; // set per-test to drive exportToFile
 const fakeElectron = {
   app: { getPath: () => DATA_DIR },
   ipcMain: { handle() {}, on() {} },
+  dialog: {
+    showSaveDialog: async () =>
+      saveDialogPath ? { canceled: false, filePath: saveDialogPath } : { canceled: true },
+  },
   webContents: {
     fromId(id) {
       return wcRegistry.get(id) || null;
@@ -269,6 +274,59 @@ function section(t) {
   }
   check('op while locked is rejected (VaultLocked)', lockedFail);
   unlocked = true;
+
+  section('12) owner "Data" pane — list + usage + view + delete + clear');
+  // Re-seed a couple sites with real content for the management view.
+  const mA = await call(makeSender(10, 'https://alpha.example/x'), 'vault_connect', {
+    appMetadata: { name: 'Alpha' },
+    requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/profile', read: true, write: true }] }],
+  });
+  await call(wcRegistry.get(10) && { senderFrame: { url: 'https://alpha.example/x' }, sender: wcRegistry.get(10) }, 'vault_setData', {
+    sessionId: mA.sessionId,
+    values: { '/profile/name': 'Alpha User' },
+  });
+  const mB = await call(makeSender(11, 'https://beta.example/y'), 'vault_connect', {
+    appMetadata: { name: 'Beta' },
+    requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/data', read: true, write: true }] }],
+  });
+  await call({ senderFrame: { url: 'https://beta.example/y' }, sender: wcRegistry.get(11) }, 'vault_setData', {
+    sessionId: mB.sessionId,
+    values: { '/data/count': 42 },
+  });
+
+  const partitions = await manager.listPartitions();
+  check('listPartitions returns every site with data', partitions.some((p) => p.namespace === 'web:alpha.example') && partitions.some((p) => p.namespace === 'web:beta.example'));
+  const alpha = partitions.find((p) => p.namespace === 'web:alpha.example');
+  check('a partition reports non-zero on-disk bytes', alpha && alpha.bytes > 0);
+
+  const usage = await manager.getUsage();
+  check('getUsage reports total bytes + count', usage.totalBytes > 0 && usage.partitionCount === partitions.length);
+
+  const view = await manager.getPartitionData('web:alpha.example');
+  check('getPartitionData decrypts the owner view', view.locked === false && view.data.profile.name === 'Alpha User');
+
+  unlocked = false;
+  const lockedView = await manager.getPartitionData('web:alpha.example');
+  check('getPartitionData returns {locked} when vault is locked', lockedView.locked === true);
+  unlocked = true;
+
+  const del = await manager.deletePartition('web:alpha.example');
+  const afterDel = await manager.listPartitions();
+  check('deletePartition removes the site + frees bytes', del.deleted && del.freedBytes > 0 && !afterDel.some((p) => p.namespace === 'web:alpha.example'));
+  const goneView = await manager.getPartitionData('web:alpha.example');
+  check('deleted partition reads back empty (manifest cleared, no rollback error)', JSON.stringify(goneView.data) === '{}');
+
+  section('13) export to file (sealed blobs) + clear all');
+  const exportPath = path.join(DATA_DIR, 'export.json');
+  saveDialogPath = exportPath;
+  const exp = await manager.exportToFile();
+  check('exportToFile writes a bundle', exp.saved && fs.existsSync(exportPath));
+  check('exported file is sealed (no plaintext)', !fs.readFileSync(exportPath, 'utf8').includes('Alpha User') && !fs.readFileSync(exportPath, 'utf8').includes('"42"'));
+  saveDialogPath = null;
+
+  const cleared = await manager.clearAll();
+  const empty = await manager.listPartitions();
+  check('clearAll removes every partition', cleared.cleared >= 1 && empty.length === 0);
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`RESULT: ${pass} passed, ${fail} failed`);

@@ -51,8 +51,11 @@ request against it fails.
 | `main/data-vault-permissions.js` | `src/main/vault/` | Remembered per-origin grants (mirrors `wallet/dapp-permissions.js`) so a returning site reconnects without a prompt. |
 | `main/data-vault-manager.js` | `src/main/vault/` | The host. Owns one `VaultEngine`, derives the authoritative origin, binds sessions to tabs, bridges consent, pushes events, and does export/import. |
 | `main/vault-provider-inject.js` | `src/main/` | `window.vault` provider **source-as-data** (mirrors `webview-preload-ethereum-inject.js`). Runs in the page realm. |
-| `main/vault-ipc-channels.js` | merge into `src/shared/ipc-channels.js` | Channel names (`vault:*`). |
-| `preload-additions.js` | splice into `src/main/webview-preload.js` | The page↔main bridge (mirrors the ethereum/swarm bridges). |
+| `main/vault-ipc-channels.js` | merge into `src/shared/ipc-channels.js` | Channel names — site-facing `vault:*` + owner-facing `datavault:*`. |
+| `preload-additions.js` | splice into `src/main/webview-preload.js` | The page↔main bridge for the site provider (mirrors the ethereum/swarm bridges). |
+| `preload-main-additions.js` | splice into `src/main/preload.js` | The **owner** bridge — `window.vaultData` for the "Data" management pane. |
+
+**Owner "Data" pane API** (`window.vaultData`, main-window only — never exposed to sites): `listPartitions()`, `getUsage()`, `getPartitionData(namespace)`, `deletePartition(namespace)`, `clearAll()`, `exportVault()`. Backed by an owner/admin plane in the engine (`adminReadPartition` / `adminDeletePartition`) that bypasses per-site grants **by design** — it's the vault owner viewing their own data through the trusted UI.
 
 ## Wiring (main process, `src/main/index.js`)
 
@@ -129,7 +132,7 @@ It exercises: origin→namespace, consent + per-field grants, real sealing to di
 (asserts the on-disk blob is ciphertext, not plaintext), per-field enforcement,
 subscriptions, per-origin **isolation**, **session/tab binding** (one page can't
 use another's `sessionId`), dweb namespaces, remembered grants (no re-prompt),
-export/import round-trip, and revoke/locked **fail-closed** — 22 checks. Run it
+export/import round-trip, and revoke/locked **fail-closed** — 32 checks. Run it
 after any change to the glue.
 
 ## Naming

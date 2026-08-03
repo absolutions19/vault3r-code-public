@@ -82,6 +82,32 @@ class DataVaultStorage {
       .map((f) => decodeURIComponent(f.slice(0, -4)))
       .filter((k) => k.startsWith(prefix));
   }
+
+  /** On-disk size in bytes of a single sealed blob (0 if absent). */
+  async byteSize(key) {
+    try {
+      const st = await fs.promises.stat(this._pathFor(key));
+      return st.size;
+    } catch (err) {
+      if (err && err.code === 'ENOENT') return 0;
+      throw err;
+    }
+  }
+
+  /** Total on-disk bytes across every sealed blob (docs + manifest). */
+  async totalBytes() {
+    const entries = await fs.promises.readdir(this._root).catch(() => []);
+    let total = 0;
+    for (const f of entries) {
+      if (!f.endsWith('.bin')) continue;
+      try {
+        total += (await fs.promises.stat(path.join(this._root, f))).size;
+      } catch {
+        /* file vanished between readdir and stat — skip */
+      }
+    }
+    return total;
+  }
 }
 
 module.exports = { DataVaultStorage };

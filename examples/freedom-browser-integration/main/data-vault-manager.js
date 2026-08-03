@@ -20,9 +20,10 @@
  * Follow the architecture-boundaries + new-IPC-channel playbooks when wiring it.
  */
 
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
+const fs = require('fs');
 const { VaultEngine } = require('@vault/vault-core');
-const { deriveOriginNamespace } = require('@vault/crypto-core');
+const { deriveOriginNamespace, storageKeyForNamespace } = require('@vault/crypto-core');
 const CH = require('./vault-ipc-channels');
 const perms = require('./data-vault-permissions');
 const { DataVaultKeystore } = require('./data-vault-keystore');
@@ -82,11 +83,20 @@ class DataVaultManager {
   // --- lifecycle ---------------------------------------------------------------
 
   register() {
+    // Site-facing provider path (untrusted pages via window.vault).
     ipcMain.handle(CH.VAULT_PROVIDER_REQUEST, (event, msg) => this._onRequest(event, msg));
-    ipcMain.handle(CH.VAULT_EXPORT, () => this.exportAll());
     ipcMain.handle(CH.VAULT_IMPORT, (_event, bundle) => this.importAll(bundle));
     // Revoking a permission from the settings UI must also kill any live session.
     perms.registerDataVaultPermissionsIpc((namespace) => this._teardownNamespace(namespace));
+
+    // Owner-facing management path (trusted wallet UI only — the "Data" pane).
+    // These are on the main-window preload, NEVER reachable from a site.
+    ipcMain.handle(CH.VAULT_LIST_PARTITIONS, () => this.listPartitions());
+    ipcMain.handle(CH.VAULT_USAGE, () => this.getUsage());
+    ipcMain.handle(CH.VAULT_GET_PARTITION_DATA, (_e, namespace) => this.getPartitionData(namespace));
+    ipcMain.handle(CH.VAULT_DELETE_PARTITION, (_e, namespace) => this.deletePartition(namespace));
+    ipcMain.handle(CH.VAULT_CLEAR_ALL, () => this.clearAll());
+    ipcMain.handle(CH.VAULT_EXPORT, () => this.exportToFile());
     console.log('[DataVaultManager] registered');
   }
 
@@ -277,6 +287,91 @@ class DataVaultManager {
       await this._storage.put(key, new Uint8Array(Buffer.from(b64, 'base64')));
     }
     return { imported: Object.keys(bundle.entries || {}).length };
+  }
+
+  // --- owner-facing management API (the "Data" pane) ---------------------------
+  //
+  // These serve the vault OWNER through the trusted wallet UI. They read/delete
+  // by namespace and are wired ONLY to the main-window preload — a website can
+  // never reach them.
+
+  /**
+   * List every site that has a data partition, with its on-disk size. This is
+   * metadata (origins/grants/sizes live in the plaintext permission store + file
+   * sizes), so it works even when the vault is locked — only viewing the data
+   * inside a partition needs an unlock.
+   */
+  async listPartitions() {
+    const all = perms.getAllPermissions();
+    const out = [];
+    for (const p of all) {
+      const storageKey = storageKeyForNamespace(p.namespace);
+      const bytes = await this._storage.byteSize(`doc:${storageKey}`);
+      out.push({
+        namespace: p.namespace,
+        origin: p.origin,
+        appName: (p.appMetadata && p.appMetadata.name) || null,
+        fields: p.fields || [],
+        methods: p.methods || [],
+        bytes,
+        lastUsed: p.lastUsed || null,
+        connectedAt: p.connectedAt || null,
+      });
+    }
+    out.sort((a, b) => b.bytes - a.bytes);
+    return out;
+  }
+
+  /** Total on-disk storage used by the whole vault, and how many sites. */
+  async getUsage() {
+    return {
+      totalBytes: await this._storage.totalBytes(),
+      partitionCount: perms.getAllPermissions().length,
+      unlocked: this._keystore.isUnlocked(),
+    };
+  }
+
+  /** Owner view of one site's stored data. Requires the vault to be unlocked. */
+  async getPartitionData(namespace) {
+    if (!this._keystore.isUnlocked()) return { namespace, locked: true };
+    const storageKey = storageKeyForNamespace(namespace);
+    const data = await this._engine.adminReadPartition(storageKey);
+    const bytes = await this._storage.byteSize(`doc:${storageKey}`);
+    return { namespace, locked: false, data, bytes };
+  }
+
+  /** Delete one site's partition: data + manifest entry + grant + live sessions. */
+  async deletePartition(namespace) {
+    const storageKey = storageKeyForNamespace(namespace);
+    const freedBytes = await this._storage.byteSize(`doc:${storageKey}`);
+    await this._engine.adminDeletePartition(storageKey); // data + manifest + sessions
+    this._teardownNamespace(namespace); // our session/tab bindings + notify pages
+    perms.revokePermission(namespace); // forget the remembered grant
+    return { deleted: true, namespace, freedBytes };
+  }
+
+  /** Delete EVERY site's partition. */
+  async clearAll() {
+    const all = perms.getAllPermissions();
+    let freedBytes = 0;
+    for (const p of all) {
+      const r = await this.deletePartition(p.namespace);
+      freedBytes += r.freedBytes;
+    }
+    return { cleared: all.length, freedBytes };
+  }
+
+  /** Export the whole vault to a user-chosen file (sealed blobs; never decrypted). */
+  async exportToFile() {
+    const bundle = await this.exportAll();
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Export vault data',
+      defaultPath: `vault-export-${this._now()}.json`,
+      filters: [{ name: 'Vault export', extensions: ['json'] }],
+    });
+    if (canceled || !filePath) return { saved: false, canceled: true };
+    await fs.promises.writeFile(filePath, JSON.stringify(bundle, null, 2), { mode: 0o600 });
+    return { saved: true, path: filePath, partitions: Object.keys(bundle.entries || {}).length };
   }
 }
 
