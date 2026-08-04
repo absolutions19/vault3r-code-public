@@ -2,9 +2,10 @@
 
 A **data vault built into the browser** — a fork of
 [`solardev-xyz/freedom-browser`](https://github.com/solardev-xyz/freedom-browser)
-in which every website gets its own encrypted, per-origin slice of storage that it
-can only touch with the user's explicit, per-field consent. *A crypto wallet, but
-for data.*
+([`0x-noad/freedom-browser`](https://github.com/0x-noad/freedom-browser) has the
+vault wired) in which every website gets its own encrypted, per-origin slice of
+storage that it can only touch with the user's explicit, per-field consent.
+*A crypto wallet, but for data.*
 
 A page calls `window.vault.connect({ fields })`; the user approves (or denies, or
 downgrades the request field-by-field) in the wallet sidebar's **Data** tab; from
@@ -33,7 +34,7 @@ browser fork. Expected sibling checkout:
 ```
 projects/
   vault3r-code-public/   # this repo
-  freedom-browser/       # Freedom with the vault applied under src/main/vault/
+  freedom-browser/       # https://github.com/0x-noad/freedom-browser (vault wired)
 ```
 
 | Package | What it is |
@@ -57,18 +58,19 @@ pnpm glue:smoke       # 78 checks against the real Freedom glue (no Electron)
 
 ### Run Freedom Browser with the vault
 
-You need a Freedom checkout that already has the vault wired (`src/main/vault/`
-present — see
-[`examples/freedom-browser-integration/README.md`](examples/freedom-browser-integration/README.md)
-to apply it to a clean clone).
+Clone the vault-wired Freedom fork
+([`0x-noad/freedom-browser`](https://github.com/0x-noad/freedom-browser) — based on
+[`solardev-xyz/freedom-browser`](https://github.com/solardev-xyz/freedom-browser)).
+It already has `src/main/vault/` and the Data / dApps UI. Reference glue for
+re-applying to a clean upstream clone lives in
+[`examples/freedom-browser-integration/README.md`](examples/freedom-browser-integration/README.md).
 
 ```bash
 # 1) Clone as siblings (skip if you already have them)
-git clone <this-repo-url> vault3r-code-public
-git clone https://github.com/solardev-xyz/freedom-browser.git
-# …apply the vault wiring into freedom-browser (integration README)…
+git clone https://github.com/absolutions19/vault3r-code-public.git
+git clone https://github.com/0x-noad/freedom-browser.git
 
-# 2) (Re)build the vendored @vault/* bundle into the fork
+# 2) (Optional) rebuild the vendored @vault/* bundle into the fork
 cd vault3r-code-public
 pnpm install
 pnpm bundle:freedom                    # → ../freedom-browser/src/main/vault/vendor/

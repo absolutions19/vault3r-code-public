@@ -18,10 +18,12 @@ identity (one unlock covers both the wallet and the data vault). Any website can
 
 ## Run it live
 
-Expected layout: this repo and a Freedom checkout as siblings
-(`…/vault3r-code-public` + `…/freedom-browser`), with the vault already applied
-under `freedom-browser/src/main/vault/` (wiring steps below if you are starting
-from a clean clone).
+Expected layout: this repo and the vault-wired Freedom fork as siblings
+(`…/vault3r-code-public` + `…/freedom-browser` from
+[`0x-noad/freedom-browser`](https://github.com/0x-noad/freedom-browser)).
+Reference files here are for re-applying to a clean
+[`solardev-xyz/freedom-browser`](https://github.com/solardev-xyz/freedom-browser)
+clone — see wiring below.
 
 ```bash
 # From the Vault3r repo root
