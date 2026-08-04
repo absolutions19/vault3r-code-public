@@ -5,7 +5,7 @@
  * private/reserved hosts and cross-host redirects, and the body is size-capped.
  */
 
-import type { IdentityResolver } from "@vault/vault-core";
+import type { IdentityResolver } from "./adapters.js";
 import { normalizeHost, isAuthoritativeForHost, NamespaceError } from "@vault/crypto-core";
 import type { VaultIdentityRecord } from "@vault/protocol";
 

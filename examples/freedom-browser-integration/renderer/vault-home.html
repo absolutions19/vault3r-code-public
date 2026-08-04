@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  VAULT HOME — the dApp launcher page (`vault://home`).
+
+  A grid of every site holding data in your vault: the site's own icon (supplied
+  in-band at connect and pinned there), its name underneath, click to launch.
+
+  Load this in a window whose preload is `preload-home-additions.js` and NOTHING
+  else. The CSP below is the second line of defence for the one genuinely risky
+  thing this page does — rendering site-supplied image bytes:
+
+    default-src 'none'   nothing loads by default
+    img-src data:        icons ONLY as inline data (main has already validated,
+                         sniffed, size/dimension-capped and re-encoded them);
+                         no remote images, so opening the launcher makes zero
+                         network requests and can never beacon your site list
+    script-src 'self'    no inline script, no eval
+    connect-src 'none'   no fetch/XHR/WebSocket, at all
+
+  Copy to `src/renderer/vault-home.html` in the freedom-browser tree.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; style-src 'self'; script-src 'self'; connect-src 'none'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+    />
+    <title>Your dApps</title>
+    <link rel="stylesheet" href="styles/vault-home.css" />
+  </head>
+  <body>
+    <main class="vh-page">
+      <header class="vh-header">
+        <h1 class="vh-title">Your dApps</h1>
+        <p class="vh-subtitle" id="vh-subtitle"></p>
+      </header>
+
+      <!-- Locked: the entire content of the page until the vault is open. -->
+      <section class="vh-locked hidden" id="vh-locked">
+        <div class="vh-locked-icon" aria-hidden="true">🔒</div>
+        <p class="vh-locked-text">Unlock to view your saved dApps.</p>
+        <button class="vh-unlock-btn" id="vh-unlock-btn" type="button">Unlock</button>
+      </section>
+
+      <!-- Unlocked: the launcher grid. -->
+      <section class="vh-grid hidden" id="vh-grid" aria-label="Sites with data in your vault"></section>
+
+      <section class="vh-empty hidden" id="vh-empty">
+        <p>No sites have saved data to your vault yet.</p>
+        <p class="vh-empty-hint">When a site asks for a data vault and you approve, it appears here.</p>
+      </section>
+    </main>
+
+    <script type="module" src="lib/vault-home.js"></script>
+  </body>
+</html>

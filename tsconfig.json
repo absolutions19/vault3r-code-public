@@ -23,5 +23,5 @@
     "tests/**/*.ts",
     "vitest.config.ts"
   ],
-  "exclude": ["**/dist/**", "**/node_modules/**", "apps/**", "examples/demo-dapp/web/**"]
+  "exclude": ["**/dist/**", "**/node_modules/**", "examples/demo-dapp/web/**"]
 }

@@ -16,6 +16,41 @@ identity (one unlock covers both the wallet and the data vault). Any website can
 > packages is a **new dependency** — get that approved per their AGENTS.md before
 > wiring.
 
+## Run it live
+
+Expected layout: this repo and a Freedom checkout as siblings
+(`…/vault3r-code-public` + `…/freedom-browser`), with the vault already applied
+under `freedom-browser/src/main/vault/` (wiring steps below if you are starting
+from a clean clone).
+
+```bash
+# From the Vault3r repo root
+pnpm install
+pnpm bundle:freedom                 # rebuilds src/main/vault/vendor/ in the fork
+pnpm glue:smoke                     # 78 headless checks (no Electron)
+
+# Launch Freedom (Ant/IPFS/Radicle downloads optional for vault-only testing)
+cd ../freedom-browser
+npm install
+unset ELECTRON_RUN_AS_NODE          # required in Cursor/VS Code agent terminals
+npm start                           # look for: [App] Data vault registered
+
+# In another terminal — serve the test dApp
+cd ../vault3r-code-public
+pnpm serve:vault-test
+```
+
+Open **http://vault-test.localhost:8765/** in Freedom (not `127.0.0.1` —
+IP literals and bare `localhost` are rejected by namespace derivation; Chromium
+maps `*.localhost` → loopback). Unlock the wallet, **Connect**, then check the
+sidebar **Data** tab and toolbar **Your dApps** (`freedom://dapps`).
+
+| Script | What it does |
+|---|---|
+| `pnpm glue:smoke` | Headless e2e over the real glue files |
+| `pnpm bundle:freedom [path]` | esbuild `@vault/*` → `freedom-browser/src/main/vault/vendor/` |
+| `pnpm serve:vault-test` | `python3 -m http.server 8765` for `test-page/` |
+
 ## Why a second, "trusted" path (and why it's still safe)
 
 Over the network, VAULT proves a site's identity with a `.well-known` record, a
@@ -49,14 +84,20 @@ request against it fails.
 | `main/data-vault-keystore.js` | `src/main/vault/` | `KeystoreAdapter` — derives the data-vault DEK from the **already-unlocked mnemonic** via domain-separated HKDF (one unlock). Seals per-namespace with XChaCha20-Poly1305. |
 | `main/data-vault-storage.js` | `src/main/vault/` | `StorageAdapter` — writes each namespace's **sealed** blob under `userData/vault-data/` (atomic rename, `0600`, path-traversal-guarded). |
 | `main/data-vault-permissions.js` | `src/main/vault/` | Remembered per-origin grants (mirrors `wallet/dapp-permissions.js`) so a returning site reconnects without a prompt. |
-| `main/data-vault-manager.js` | `src/main/vault/` | The host. Owns one `VaultEngine`, derives the authoritative origin, binds sessions to tabs, bridges consent, pushes events, and does export/import. |
+| `main/data-vault-manager.js` | `src/main/vault/` | The host. Owns one `VaultEngine`, derives the authoritative origin, binds sessions to tabs, bridges consent, pushes events, serves the home-page grid, and does export/import. |
+| `main/data-vault-icon.js` | `src/main/vault/` | Validates + re-encodes the site-supplied tile icon (data: URIs only, no SVG, magic-byte + size + dimension caps), and the deterministic monogram fallback. |
 | `main/vault-provider-inject.js` | `src/main/` | `window.vault` provider **source-as-data** (mirrors `webview-preload-ethereum-inject.js`). Runs in the page realm. |
 | `main/vault-ipc-channels.js` | merge into `src/shared/ipc-channels.js` | Channel names — site-facing `vault:*` + owner-facing `datavault:*`. |
 | `preload-additions.js` | splice into `src/main/webview-preload.js` | The page↔main bridge for the site provider (mirrors the ethereum/swarm bridges). |
 | `preload-main-additions.js` | splice into `src/main/preload.js` | The **owner** bridge — `window.vaultData` for the "Data" management pane. |
 | `renderer/vault-data.js` | `src/renderer/lib/wallet/` | The "Data" pane submodule — list / detail / consent-request views. |
 | `renderer/vault-data.css` | `src/renderer/styles/` (+ `@import`) | Pane styles, using the existing sidebar tokens. |
-| `renderer/index-snippets.html` | splice into `src/renderer/index.html` | The tab button + `#tab-data` panel markup, and the wallet-ui wiring notes. |
+| `preload-home-additions.js` | `src/main/webview-preload.js` (guarded) / or a dedicated preload | The `window.vaultHome` bridge for the **launcher page only**. In the wired fork it is gated to `freedom://dapps` (`pages/dapps.html`) — never attach an unguarded home preload to a normal webview. |
+| `renderer/vault-home.html` | `src/renderer/pages/dapps.html` (fork adapts this) | The `freedom://dapps` launcher page, with its own strict CSP. |
+| `renderer/vault-home.js` | inlined into `dapps.html` (or `src/renderer/lib/`) | The launcher grid — tiles, monogram fallback, locked state. |
+| `renderer/vault-home.css` | inlined / `src/renderer/styles/` | Launcher styles (existing tokens, light + dark). |
+| `renderer/index-snippets.html` | splice into `src/renderer/index.html` | The tab button + `#tab-data` panel markup, the toolbar button for the launcher, and the wallet-ui wiring notes. |
+| `test-page/` | serve locally | Minimal site that drives `window.vault` — see [Run it live](#run-it-live). |
 
 ## The "Data" management pane
 
@@ -130,12 +171,94 @@ app.whenReady().then(() => vault.register());
 Then splice the three blocks from `preload-additions.js` into
 `webview-preload.js`, and add the `vault:*` channels to `src/shared/ipc-channels.js`.
 
+## The vault home page (`vault://home`)
+
+A dedicated internal page, reached from a **toolbar button**: a grid of every site
+holding data in your vault — the site's own icon, its name underneath, click to
+launch. It is the launcher; the Data tab remains the manager.
+
+**Why this is a browser page and not a bookmarked dweb site.** The list of sites
+you hold data for is a cross-origin aggregate — browsing history, structurally.
+Handing it to *any* web origin, even a pinned CID, would make the thing this whole
+design calls "structurally unrepresentable" merely allowlisted, and one XSS or one
+repointed `ens://` name later it exfiltrates in an `<img src>`. Rendering it in a
+privileged internal page means the list never crosses into a page context at all.
+
+Three properties the implementation must keep:
+
+| Property | Enforced by |
+|---|---|
+| No page can read the site list | `window.vaultHome` is exposed **only** on the launcher's own preload; the site-facing provider has no such method |
+| Opening the launcher makes **zero** network requests | icons arrive in-band at connect (below), and the page's CSP is `default-src 'none'; img-src data:; connect-src 'none'` |
+| The launcher can't navigate anywhere arbitrary | tiles pass a **namespace**, never a URL; main resolves it to the origin *it* observed at grant time and checks the scheme against an allow-list |
+
+Locked shows the unlock prompt and nothing else — no tiles, and no site *count*
+either, since "how many sites" is itself a fact about the user.
+
+Wiring in `src/main/index.js`:
+
+```js
+const { BrowserWindow, nativeImage } = require('electron');
+
+// Pass the two new seams when constructing the manager (see above):
+const vault = new DataVaultManager({
+  /* …dataDir, identityVault, promptConsent… */
+  nativeImage,                       // lets main re-encode site icons
+  openUrl: (url) => openInNewTab(url), // your existing tab API
+});
+
+// The launcher window. These options are load-bearing, not boilerplate:
+function openVaultHome() {
+  const win = new BrowserWindow({
+    webPreferences: {
+      preload: path.join(__dirname, 'vault-home-preload.js'), // ONLY here
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.loadFile(path.join(__dirname, '../renderer/vault-home.html'));
+  // Never let this window become a web page — it holds a privileged bridge.
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+```
+
+If you instead render the launcher as a tab inside the main window, give it its
+own `BrowserView`/partition with the same rules — the one thing that must never
+happen is `vault-home-preload.js` ending up in a `webPreferences.preload` that web
+content can reach.
+
 ## What a website does
+
+Sites already write code to use the vault, so they supply their own tile icon —
+**in-band, at connect**. There is no `.well-known` path and no fetch: a network
+request per tile would beacon your whole vault list on every render and wouldn't
+work for `ipfs://` or `ens://` sites at all.
+
+```js
+appMetadata: {
+  name: 'My dApp',
+  // PNG / JPEG / WebP as a data: URI. NO SVG (script-capable).
+  // ≤ 64 KB, between 8×8 and 512×512. Main re-encodes it to a 128×128 PNG.
+  icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg…',
+}
+```
+
+The icon is **pinned at consent** and only rewritten when the user consents again,
+so a site can't silently restyle its own tile later to imitate another one. A site
+that supplies nothing gets a monogram — its first letter on a hue derived from the
+namespace — so no tile is ever blank. The name is stripped of control and bidi
+characters (the `ev‮il .com` trick) and length-capped before it is stored or shown.
+
+Note that this is site-controlled artwork: it buys recognition, not verification.
+That is why the tile's accessible name and tooltip always carry the **host the
+browser actually observed**, and why nothing destructive lives on the launcher.
 
 ```js
 // 1) Ask for a vault (user confirms once; grants persist).
 const { sessionId } = await window.vault.connect({
-  appMetadata: { name: 'My dApp', iconUrl: '/icon.png' },
+  appMetadata: { name: 'My dApp', icon: 'data:image/png;base64,…' },
   requestedScopes: [{
     methods: ['vault_getData', 'vault_setData', 'vault_subscribe'],
     fields: [
@@ -161,15 +284,20 @@ permissions) end-to-end against the engine — no Electron, no GUI — with fake
 only the two Electron touchpoints (the identity-vault bridge and `webContents`):
 
 ```bash
-npx tsx examples/freedom-browser-integration/test/glue-smoke.cjs
+pnpm glue:smoke
+# same as: npx tsx examples/freedom-browser-integration/test/glue-smoke.cjs
 ```
 
 It exercises: origin→namespace, consent + per-field grants, real sealing to disk
 (asserts the on-disk blob is ciphertext, not plaintext), per-field enforcement,
 subscriptions, per-origin **isolation**, **session/tab binding** (one page can't
 use another's `sessionId`), dweb namespaces, remembered grants (no re-prompt),
-export/import round-trip, and revoke/locked **fail-closed** — 32 checks. Run it
-after any change to the glue.
+export/import round-trip, and revoke/locked **fail-closed**; plus the icon
+validator (SVG, remote URLs, MIME/magic mismatch, size cap, dimension bomb, bidi
+names), the launcher (icon pinning, monogram fallback, launch-by-namespace,
+non-browsable scheme refused, locked leaks neither tiles nor a count), permission
+store encryption, and sealed export of the site list — **78 checks**.
+Run it after any change to the glue.
 
 ## Naming
 
@@ -195,12 +323,63 @@ own `src/shared/origin-utils.js` `getPermissionKey(displayUrl)` output through
 `originForNamespace` before deriving. The manager's `originForNamespace` here is a
 minimal stand-in.
 
+## Metadata at rest (the permission store)
+
+`vault-permissions.json` used to sit in `userData` as plaintext at `0600`. What it
+holds is a list of every site you hold data for, with grants, timestamps and now
+pinned icons — browsing history, structurally — and `0600` does nothing about
+backups (Time Machine, iCloud and OneDrive all sync app data), disk clones, or a
+powered-off machine without full-disk encryption.
+
+It is now `vault-permissions.enc`, encrypted with Electron **`safeStorage`** (OS
+keychain: Keychain / DPAPI / libsecret), migrated automatically on first load with
+the plaintext original deleted.
+
+Why the OS keychain and not the vault DEK: the DEK only exists while the mnemonic
+is unlocked, and this store must stay readable while the vault is **locked** — the
+remembered-grant lookup in `_decideConsent` runs before the engine's unlock check,
+and `openSite` resolves a launcher tile to the origin it was granted at.
+`safeStorage` is keyed to the OS user session, so the encryption costs nothing in
+locked-state behaviour.
+
+That is separate from what the UI *shows*. While locked, both the Data pane and the
+launcher render an unlock prompt and nothing else — no site list, no sizes, not
+even a count — and `listPartitions`, `getUsage` and `listHomeTiles` return empty to
+match, so there is no list to leak to whoever walks up to an unattended browser.
+
+Honest about what it buys: it protects at-rest snapshots. It does **not** stop
+malware running as you (unlocked it reads the plaintext or drives the IPC; locked
+it waits). And the sealed-blob directory still leaks by shape — filenames are
+`doc:<sha256(namespace)>.bin`, an unsalted hash of a low-entropy input, so anyone
+with the folder can confirm guesses from a domain wordlist and read per-site sizes
+from `stat`. Closing that needs key-derived filenames and size padding, which
+would in turn stop the manifest detecting deletions while locked.
+
+Two failure modes are handled explicitly: where no OS keyring is available
+(`isEncryptionAvailable()` false — Linux without libsecret, where the `basic_text`
+backend is not meaningfully encrypted) the file is written with a `VLT0` header so
+it is honestly labelled rather than pretending; and a file that cannot be decrypted
+(profile moved between machines, keychain entry lost) is preserved as
+`.enc.unreadable` rather than silently overwritten, so grants are never destroyed
+by a bad read.
+
 ## Export / import (decision #5)
 
-`vault:export` returns a portable bundle of the **sealed** blobs (never
-decrypted) + the permission map. `vault:import` writes them back verbatim. A
-restore only decrypts on a device with the **same mnemonic** (the DEK is derived
-from it) — the natural hook for future cloud sync.
+`vault:export` returns a portable bundle of the **sealed** blobs (never decrypted)
+plus the permission map **sealed under the DEK**. Both only open on a device with
+the same mnemonic — the natural hook for future cloud sync.
+
+The permission map used to ride along as cleartext JSON, which put the full site
+list (and, once icons existed, the icons) in a file users drop into cloud storage.
+Sealing it means **export now requires an unlock**, which matches the Data pane
+already requiring one to read the same material.
+
+`vault:import` writes the blobs back verbatim and restores the grants. That
+restore is new and load-bearing: import previously wrote blobs but never grants,
+so a restored vault re-prompted for every site *and* showed nothing in the Data
+pane, which enumerates by grant. A bundle whose sealed map doesn't open (wrong
+vault, tampered file) fails closed rather than half-restoring. Legacy `/1` bundles
+still import their blobs; their cleartext permission map is ignored.
 
 ## Open decisions to confirm with the team
 

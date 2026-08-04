@@ -2,5 +2,3 @@ packages:
   - "packages/*"
   - "servers/*"
   - "examples/*"
-# apps/* (Expo React Native) is intentionally excluded from the install workspace:
-# it requires a native toolchain (Xcode/Android) and is installed on its own.

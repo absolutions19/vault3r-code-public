@@ -93,6 +93,16 @@ export interface Grant {
 export interface AppMetadata {
   name?: string;
   description?: string;
+  /**
+   * A `data:` URI carrying the app's icon IN-BAND (png/jpeg/webp, no SVG).
+   * Delivered at connect time so the vault never makes a network request to
+   * display a site — which would leak "these are the sites I hold data for" to
+   * the network on every render, and would not work for dweb origins at all.
+   * The host MUST validate + re-encode this before storing it; see
+   * `examples/freedom-browser-integration/main/data-vault-icon.js`.
+   */
+  icon?: string;
+  /** Legacy display hint. The vault NEVER fetches this — see `icon`. */
   iconUrl?: string;
   url?: string;
 }

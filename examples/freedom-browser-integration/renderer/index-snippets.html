@@ -6,12 +6,21 @@
   switch itself.
 -->
 
-<!-- 1) Add the tab button inside `.sidebar-tabs`, after the Nodes button: -->
+<!-- 1) Add the tab button inside `.sidebar-tabs`, after Nodes and before Settings
+        (order: Wallet → Nodes → Data → Settings): -->
 <button type="button" class="sidebar-tab" data-tab="data">Data</button>
 
 <!-- 2) Add this panel as a sibling of #tab-wallet / #tab-nodes / #tab-settings
         (e.g. immediately before #tab-settings), inside #sidebar-identity: -->
 <div id="tab-data" class="tab-panel hidden">
+  <!-- LOCKED VIEW — the ONLY thing shown while the vault is locked. -->
+  <div id="vault-locked-view" class="vault-locked hidden">
+    <div class="vault-locked-icon" aria-hidden="true">🔒</div>
+    <div class="vault-locked-title">Your vault is locked</div>
+    <div class="vault-locked-text">Unlock to view the sites that have stored data.</div>
+    <button type="button" id="vault-unlock-btn" class="vault-btn primary">Unlock</button>
+  </div>
+
   <!-- LIST VIEW -->
   <div id="vault-list-view">
     <div class="sidebar-section">
@@ -81,4 +90,44 @@
 
   4) In src/renderer/styles.css: `@import './styles/vault-data.css';` (after sidebar.css).
   5) In src/main/preload.js: add the `window.vaultData` bridge (see preload-main-additions.js).
+-->
+
+<!-- =========================================================================
+     VAULT HOME (`vault://home`) — the dApp launcher
+     ========================================================================= -->
+
+<!--
+  6) Toolbar button. Add to the browser chrome in src/renderer/index.html, next to
+     the existing navigation controls:
+-->
+<button type="button" id="vault-home-btn" class="toolbar-btn" title="Your dApps" aria-label="Your dApps">
+  <!-- 3x3 grid glyph; swap for the browser's own icon set -->
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+    <rect x="1" y="1" width="4" height="4" rx="1" />
+    <rect x="6" y="1" width="4" height="4" rx="1" />
+    <rect x="11" y="1" width="4" height="4" rx="1" />
+    <rect x="1" y="6" width="4" height="4" rx="1" />
+    <rect x="6" y="6" width="4" height="4" rx="1" />
+    <rect x="11" y="6" width="4" height="4" rx="1" />
+    <rect x="1" y="11" width="4" height="4" rx="1" />
+    <rect x="6" y="11" width="4" height="4" rx="1" />
+    <rect x="11" y="11" width="4" height="4" rx="1" />
+  </svg>
+</button>
+
+<!--
+  7) Wire the button in src/renderer/lib/wallet-ui.js (or wherever the toolbar is
+     bound). It opens the INTERNAL page — not a web URL:
+
+       document.getElementById('vault-home-btn')
+         ?.addEventListener('click', () => window.browser.openVaultHome());
+
+     …with `openVaultHome` added to the main-window preload and handled in main by
+     loading vault-home.html in a window/view whose preload is
+     preload-home-additions.js. See the integration README for the main-process
+     wiring and the isolation rules that window MUST satisfy.
+
+  8) The home page is a standalone document; it loads its own
+     `styles/vault-home.css` and `lib/vault-home.js` and does NOT need a
+     styles.css @import.
 -->

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VAULT test dApp</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 20px; background: #0d1117; color: #e6edf3; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    .sub { color: #8b949e; margin-bottom: 1.5rem; font-size: 0.9rem; }
+    button { background: #238636; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; margin: 4px 4px 4px 0; cursor: pointer; font-size: 0.9rem; }
+    button.secondary { background: #21262d; border: 1px solid #30363d; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    input, textarea { width: 100%; box-sizing: border-box; background: #161b22; border: 1px solid #30363d; color: #e6edf3; border-radius: 6px; padding: 8px; margin: 6px 0 12px; font: inherit; }
+    #log { background: #010409; border: 1px solid #30363d; border-radius: 8px; padding: 12px; min-height: 160px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow: auto; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: #21262d; border: 1px solid #30363d; }
+    .badge.ok { background: #1a7f37; border-color: #238636; }
+    .badge.no { background: #6e2b2b; border-color: #a04040; }
+  </style>
+</head>
+<body>
+  <h1>VAULT test dApp</h1>
+  <p class="sub">Exercises <code>window.vault</code> inside Freedom Browser. Unlock the wallet first, then Connect.</p>
+  <p>Provider: <span id="status" class="badge no">missing</span></p>
+
+  <label>Handle</label>
+  <input id="handle" value="@alice" />
+  <label>Note</label>
+  <textarea id="note" rows="3">hello from the vault</textarea>
+
+  <div>
+    <button id="btn-connect">Connect</button>
+    <button id="btn-set" class="secondary" disabled>Write</button>
+    <button id="btn-get" class="secondary" disabled>Read</button>
+    <button id="btn-sub" class="secondary" disabled>Subscribe</button>
+    <button id="btn-disconnect" class="secondary" disabled>Disconnect</button>
+  </div>
+
+  <h2 style="font-size:1rem;margin-top:1.5rem">Log</h2>
+  <div id="log"></div>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const status = document.getElementById('status');
+    let sessionId = null;
+
+    function log(...args) {
+      const line = args.map((a) => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join(' ');
+      logEl.textContent += line + '\n';
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(...args);
+    }
+
+    function setConnected(ok) {
+      document.getElementById('btn-set').disabled = !ok;
+      document.getElementById('btn-get').disabled = !ok;
+      document.getElementById('btn-sub').disabled = !ok;
+      document.getElementById('btn-disconnect').disabled = !ok;
+    }
+
+    function refreshProvider() {
+      if (window.vault && window.vault.isVault3r) {
+        status.textContent = 'window.vault ready';
+        status.className = 'badge ok';
+        return true;
+      }
+      status.textContent = 'missing — open this page in Freedom';
+      status.className = 'badge no';
+      return false;
+    }
+
+    // Tiny 16x16 green PNG as a data URI (valid icon for the launcher tile).
+    const ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAHklEQVQ4T2NkYGD4z0ABYBzVMKoBVAOGawADAwMA/BsCAfVnH6EAAAAASUVORK5CYII=';
+
+    document.getElementById('btn-connect').onclick = async () => {
+      if (!refreshProvider()) return;
+      try {
+        log('→ connect…');
+        const res = await window.vault.connect({
+          appMetadata: { name: 'VAULT test dApp', icon: ICON },
+          requestedScopes: [{
+            methods: ['vault_getData', 'vault_setData', 'vault_subscribe', 'vault_unsubscribe'],
+            fields: [
+              { path: '/profile', read: true, write: true },
+              { path: '/prefs', read: true, write: true },
+            ],
+          }],
+        });
+        sessionId = res.sessionId;
+        log('← connected', res);
+        setConnected(true);
+      } catch (e) {
+        log('✗ connect failed:', e.message || e);
+      }
+    };
+
+    document.getElementById('btn-set').onclick = async () => {
+      try {
+        const values = {
+          '/profile/handle': document.getElementById('handle').value,
+          '/prefs/note': document.getElementById('note').value,
+        };
+        log('→ set', values);
+        const res = await window.vault.set(sessionId, values);
+        log('← set', res);
+      } catch (e) {
+        log('✗ set failed:', e.message || e);
+      }
+    };
+
+    document.getElementById('btn-get').onclick = async () => {
+      try {
+        log('→ get');
+        const res = await window.vault.get(sessionId, ['/profile/handle', '/prefs/note']);
+        log('← get', res);
+        if (res && res.values) {
+          if (res.values['/profile/handle'] != null) document.getElementById('handle').value = res.values['/profile/handle'];
+          if (res.values['/prefs/note'] != null) document.getElementById('note').value = res.values['/prefs/note'];
+        }
+      } catch (e) {
+        log('✗ get failed:', e.message || e);
+      }
+    };
+
+    document.getElementById('btn-sub').onclick = async () => {
+      try {
+        log('→ subscribe /profile');
+        const res = await window.vault.subscribe(sessionId, ['/profile']);
+        log('← subscribe', res);
+        window.vault.on('change', (u) => log('⚡ change', u));
+        window.vault.on('permissionsRevoked', (u) => log('⚡ revoked', u));
+      } catch (e) {
+        log('✗ subscribe failed:', e.message || e);
+      }
+    };
+
+    document.getElementById('btn-disconnect').onclick = async () => {
+      try {
+        log('→ disconnect');
+        await window.vault.disconnect(sessionId);
+        sessionId = null;
+        setConnected(false);
+        log('← disconnected');
+      } catch (e) {
+        log('✗ disconnect failed:', e.message || e);
+      }
+    };
+
+    window.addEventListener('vault#initialized', () => {
+      log('vault#initialized');
+      refreshProvider();
+    });
+    refreshProvider();
+    // Provider inject can arrive slightly after DOMContentLoaded.
+    setTimeout(refreshProvider, 250);
+    setTimeout(refreshProvider, 1000);
+  </script>
+</body>
+</html>

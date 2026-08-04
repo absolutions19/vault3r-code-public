@@ -32,6 +32,15 @@ module.exports = {
   VAULT_CLEAR_ALL: 'datavault:clear-all',
   VAULT_EXPORT: 'datavault:export', // integration decision #5
 
+  // Vault home page (`vault://home`) — the dApp launcher. Same owner-plane trust
+  // level as the `datavault:*` channels above: wired ONLY to the internal page's
+  // preload, never to a webview. Read-only + navigate; nothing destructive lives
+  // on the launcher (management stays in the "Data" pane).
+  VAULT_HOME_STATUS: 'datavault:home-status',
+  VAULT_HOME_TILES: 'datavault:home-tiles',
+  VAULT_HOME_OPEN: 'datavault:home-open',
+  VAULT_HOME_UNLOCK: 'datavault:home-unlock',
+
   // Preload bootstrap (sync): fetch the window.vault inject source.
   VAULT_GET_INJECT_SOURCE: 'internal:get-vault-inject-source',
 };

@@ -1,9 +1,10 @@
 /**
- * Platform adapter interfaces. The engine is platform-agnostic: on a phone these
- * are backed by the Secure Enclave / Android Keystore, biometric prompts, and
- * encrypted on-device storage; in tests and the relay e2e they are backed by
- * in-memory implementations. The engine never touches raw key material — it only
- * asks the keystore to seal/open and to authenticate the user.
+ * Platform adapter interfaces. The engine is platform-agnostic: in the browser
+ * host these are backed by a DEK derived from the unlocked identity mnemonic, the
+ * host's unlock/consent UI, and sealed blobs under `userData/`; in tests and the
+ * relay e2e they are backed by in-memory implementations. The engine never touches
+ * raw key material — it only asks the keystore to seal/open and to authenticate
+ * the user.
  */
 
 import type { Base64Url } from "@vault/protocol";

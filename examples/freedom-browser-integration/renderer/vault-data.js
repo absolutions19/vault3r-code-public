@@ -28,7 +28,12 @@ export function initVaultData(opts = {}) {
   const panel = document.getElementById('tab-data');
   if (!panel) return { refresh: () => {} };
   const openAndFocus = typeof opts.openAndFocus === 'function' ? opts.openAndFocus : () => {};
+  // Host seam: show whatever unlock UI the browser already owns (the data vault
+  // has none of its own — one unlock covers the identity vault and this one).
+  const requestUnlock = typeof opts.requestUnlock === 'function' ? opts.requestUnlock : null;
 
+  const lockedView = document.getElementById('vault-locked-view');
+  const unlockBtn = document.getElementById('vault-unlock-btn');
   const listView = document.getElementById('vault-list-view');
   const detailView = document.getElementById('vault-detail-view');
   const requestView = document.getElementById('vault-request-view');
@@ -71,11 +76,36 @@ export function initVaultData(opts = {}) {
       listEl.innerHTML = `<div class="vault-empty">Error: ${err.message}</div>`;
       return;
     }
+
+    // Locked: show the unlock prompt and NOTHING else. Not even the site count —
+    // the list of sites you hold data for is history-shaped, and a locked vault
+    // must not display it to whoever walks up to the browser.
+    setLocked(!usage.unlocked);
+    if (!usage.unlocked) return;
+
     const count = usage.partitionCount;
     usageText.textContent = `${fmtBytes(usage.totalBytes)} · ${count} site${count === 1 ? '' : 's'}`;
     const cap = Math.max(usage.totalBytes, 64 * 1024);
     usageFill.style.width = `${Math.min(100, Math.round((usage.totalBytes / cap) * 100))}%`;
     renderList(parts);
+  }
+
+  /** Swap the whole pane between its locked prompt and its normal content. */
+  function setLocked(locked) {
+    if (lockedView) lockedView.classList.toggle('hidden', !locked);
+    // Hide every real view while locked, and drop any stale rows so nothing
+    // survives behind the prompt.
+    if (locked) {
+      listView.classList.add('hidden');
+      detailView.classList.add('hidden');
+      requestView.classList.add('hidden');
+      listEl.innerHTML = '';
+      usageText.textContent = '';
+      usageFill.style.width = '0%';
+      currentNs = null;
+    } else if (listView.classList.contains('hidden') && detailView.classList.contains('hidden') && requestView.classList.contains('hidden')) {
+      listView.classList.remove('hidden');
+    }
   }
 
   function renderList(parts) {
@@ -216,6 +246,20 @@ export function initVaultData(opts = {}) {
     await window.vaultData.clearAll();
     refresh();
   });
+
+  if (unlockBtn && requestUnlock) {
+    unlockBtn.addEventListener('click', async () => {
+      unlockBtn.disabled = true;
+      try {
+        await requestUnlock();
+      } catch {
+        // cancelled — refresh re-reads the real lock state either way
+      } finally {
+        unlockBtn.disabled = false;
+        refresh();
+      }
+    });
+  }
 
   // Consent: main pushes a request when a site connects for the first time.
   if (window.vaultData && window.vaultData.onConsentRequest) {

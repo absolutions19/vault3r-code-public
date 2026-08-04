@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "VAULT — a mobile, biometric-encrypted data vault with a crypto-wallet-style permission protocol. Monorepo.",
+  "description": "VAULT — an encrypted, per-origin data vault built into the browser, with a crypto-wallet-style permission protocol. Monorepo.",
   "engines": {
     "node": ">=20"
   },
@@ -17,7 +17,9 @@
     "demo:signer": "tsx examples/demo-dapp/server.ts",
     "bundle:web": "node examples/demo-dapp/web/build.mjs",
     "demo": "pnpm run bundle:web && tsx examples/demo-dapp/demo-server.ts",
-    "gen:vectors": "tsx tools/gen-native-vectors.mts"
+    "glue:smoke": "tsx examples/freedom-browser-integration/test/glue-smoke.cjs",
+    "bundle:freedom": "node tools/bundle-for-freedom.mjs",
+    "serve:vault-test": "python3 -m http.server 8765 --directory examples/freedom-browser-integration/test-page"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

@@ -46,9 +46,20 @@ const ALIASES = {
 const wcRegistry = new Map();
 const capturedEvents = [];
 let saveDialogPath = null; // set per-test to drive exportToFile
+// A stand-in for Electron's OS-keychain encryptor. Deliberately trivial (byte
+// inversion) — the point is to prove the permission store round-trips through the
+// seam and never hits disk as readable JSON, not to test Chromium's crypto.
+let encryptionAvailable = true;
+const fakeSafeStorage = {
+  isEncryptionAvailable: () => encryptionAvailable,
+  encryptString: (s) => Buffer.from(Buffer.from(s, 'utf-8').map((b) => b ^ 0xff)),
+  decryptString: (buf) => Buffer.from(Buffer.from(buf).map((b) => b ^ 0xff)).toString('utf-8'),
+};
 const fakeElectron = {
-  app: { getPath: () => DATA_DIR },
+  // Mutable so the migration test can point userData at a fresh profile.
+  app: { getPath: () => DATA_DIR_REF.value },
   ipcMain: { handle() {}, on() {} },
+  safeStorage: fakeSafeStorage,
   dialog: {
     showSaveDialog: async () =>
       saveDialogPath ? { canceled: false, filePath: saveDialogPath } : { canceled: true },
@@ -76,6 +87,8 @@ Module._resolveFilename = function (request, parent, isMain, options) {
 
 // --- test fixtures -----------------------------------------------------------
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-glue-'));
+/** Indirection so a test can retarget `app.getPath('userData')`. */
+const DATA_DIR_REF = { value: DATA_DIR };
 // A valid BIP-39 test mnemonic (Hardhat's). The keystore only HKDFs it.
 const MNEMONIC = 'test test test test test test test test test test test junk';
 let unlocked = true;
@@ -98,12 +111,18 @@ async function promptConsent(payload) {
 
 // --- load the REAL glue ------------------------------------------------------
 const { DataVaultManager } = require(path.join(GLUE, 'data-vault-manager.js'));
+const { normalizeIcon, monogramFor, sanitizeName } = require(path.join(GLUE, 'data-vault-icon.js'));
+const permsStore = require(path.join(GLUE, 'data-vault-permissions.js'));
+
+/** Every URL the home page asked the host to navigate to. */
+const openedUrls = [];
 
 let clock = 1_760_000_000_000;
 const manager = new DataVaultManager({
   dataDir: DATA_DIR,
   identityVault,
   promptConsent,
+  openUrl: (url) => openedUrls.push(url),
   now: () => clock,
 });
 
@@ -127,6 +146,52 @@ async function call(sender, method, params) {
     throw e;
   }
   return res.result;
+}
+
+// --- PNG fixtures ------------------------------------------------------------
+// Real, structurally valid PNGs built here so the icon validator is exercised
+// against actual bytes rather than a hand-waved string.
+const zlib = require('zlib');
+
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type, data) {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body), 0);
+  return Buffer.concat([len, body, crc]);
+}
+/** @param {boolean} realPixels false = header-only (for dimension-bomb fixtures). */
+function makePng(w, h, realPixels = true) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // colour type: truecolour
+  const raw = realPixels ? Buffer.alloc(h * (1 + w * 3)) : Buffer.alloc(1);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+function dataUri(mime, buf) {
+  return `data:${mime};base64,${buf.toString('base64')}`;
 }
 
 // --- output helpers ----------------------------------------------------------
@@ -327,6 +392,185 @@ function section(t) {
   const cleared = await manager.clearAll();
   const empty = await manager.listPartitions();
   check('clearAll removes every partition', cleared.cleared >= 1 && empty.length === 0);
+
+  section('14) site-supplied icon: validation (the page controls these bytes)');
+  const goodPng = dataUri('image/png', makePng(64, 64));
+  check('a valid PNG is accepted', normalizeIcon(goodPng).ok === true);
+
+  const svg = dataUri('image/svg+xml', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+  check('SVG is rejected (script-capable in a privileged page)', normalizeIcon(svg).ok === false);
+
+  check(
+    'an http(s) URL is rejected (no fetch path back into the renderer)',
+    normalizeIcon('https://evil.example/icon.png').ok === false,
+  );
+  check('a file: URL is rejected', normalizeIcon('file:///etc/passwd').ok === false);
+
+  const jpegBytesAsPng = dataUri('image/png', Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]));
+  check('declared MIME must match the magic bytes', normalizeIcon(jpegBytesAsPng).ok === false);
+
+  const oversized = dataUri('image/png', Buffer.concat([makePng(64, 64), Buffer.alloc(70 * 1024, 0x41)]));
+  check('an oversized icon is rejected (disk-fill / DoS cap)', normalizeIcon(oversized).ok === false);
+
+  const bomb = dataUri('image/png', makePng(20000, 20000, false));
+  check('a decompression bomb is rejected on its header dimensions', normalizeIcon(bomb).ok === false);
+
+  check('a 4x4 icon is rejected (below the minimum)', normalizeIcon(dataUri('image/png', makePng(4, 4))).ok === false);
+  check('a non-string icon is rejected', normalizeIcon({ toString: () => goodPng }).ok === false);
+
+  // The re-encode seam: in the real browser Electron's nativeImage normalizes the
+  // bytes, so what we persist was produced by us and carries no EXIF/animation.
+  const stubNativeImage = {
+    createFromBuffer: () => ({
+      isEmpty: () => false,
+      resize: () => ({ toPNG: () => makePng(128, 128) }),
+    }),
+  };
+  const reencoded = normalizeIcon(dataUri('image/png', makePng(64, 64)), { nativeImage: stubNativeImage });
+  check(
+    'with a re-encoder present the icon is normalized to a 128px PNG',
+    reencoded.ok && reencoded.icon.mime === 'image/png' && reencoded.icon.width === 128,
+  );
+
+  check('a claimed name with bidi/control chars is stripped', sanitizeName('ev‮il .com') === 'evil.com');
+  check('a claimed name is length-capped', sanitizeName('x'.repeat(400)).length <= 128);
+  check('monogram is deterministic per namespace', monogramFor('web:example.com').hue === monogramFor('web:example.com').hue);
+  check('different namespaces get different hues', monogramFor('web:a.example').hue !== monogramFor('web:b.example').hue);
+
+  section('15) vault home page (launcher grid)');
+  const ICON_SITE = makeSender(11, 'https://iconic.example/app');
+  const PLAIN_SITE = makeSender(12, 'https://plain.example/');
+  await call(ICON_SITE, 'vault_connect', {
+    appMetadata: { name: 'Iconic‮ App', icon: goodPng },
+    requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/x', read: true, write: true }] }],
+  });
+  await call(PLAIN_SITE, 'vault_connect', {
+    appMetadata: { name: 'Plain App' }, // no icon
+    requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/x', read: true, write: true }] }],
+  });
+
+  const home = await manager.listHomeTiles();
+  check('home lists a tile per site with a grant', home.locked === false && home.tiles.length === 2);
+  const iconTile = home.tiles.find((t) => t.namespace === 'web:iconic.example');
+  const plainTile = home.tiles.find((t) => t.namespace === 'web:plain.example');
+  check('a site-supplied icon is pinned to its tile', !!iconTile && typeof iconTile.icon === 'string' && iconTile.icon.startsWith('data:image/png;base64,'));
+  check('the pinned tile name is sanitized (no bidi override)', !!iconTile && !iconTile.name.includes('‮'));
+  check('a site with no icon falls back to a monogram', !!plainTile && plainTile.icon === null && plainTile.monogram.letter === 'P');
+  check('each tile carries the host the browser actually observed', !!iconTile && iconTile.host === 'iconic.example');
+
+  const statusUnlocked = await manager.getHomeStatus();
+  check('status reports the count while unlocked', statusUnlocked.unlocked === true && statusUnlocked.count === 2);
+
+  openedUrls.length = 0;
+  const opened = await manager.openSite('web:iconic.example');
+  check('clicking a tile launches the origin observed at grant time', opened.opened === true && openedUrls[0] === 'https://iconic.example');
+  const unknown = await manager.openSite('web:never-granted.example');
+  check('launching an unknown namespace is refused', unknown.opened === false);
+
+  // A grant whose stored origin is not a browsable scheme must never navigate —
+  // the launcher must not become a way to reach javascript:/file:/data:.
+  permsStore.grantPermission('web:hostile.example', { origin: 'javascript:alert(1)', methods: [], fields: [] }, clock);
+  const hostile = await manager.openSite('web:hostile.example');
+  check('a non-browsable scheme is refused', hostile.opened === false && openedUrls.length === 1);
+  permsStore.revokePermission('web:hostile.example');
+
+  unlocked = false;
+  const lockedHome = await manager.listHomeTiles();
+  const lockedStatus = await manager.getHomeStatus();
+  check('locked: the grid returns no tiles at all', lockedHome.locked === true && lockedHome.tiles.length === 0);
+  check('locked: status leaks no site count', lockedStatus.unlocked === false && lockedStatus.count === undefined);
+
+  // The Data pane obeys the same rule: a locked vault shows an unlock prompt and
+  // nothing else, so the owner API must not hand it a site list to render.
+  const lockedParts = await manager.listPartitions();
+  const lockedUsage = await manager.getUsage();
+  check('locked: listPartitions returns nothing for the Data pane', Array.isArray(lockedParts) && lockedParts.length === 0);
+  check('locked: getUsage reports the lock state and no counts', lockedUsage.unlocked === false && lockedUsage.partitionCount === 0 && lockedUsage.totalBytes === 0);
+  unlocked = true;
+  const unlockedParts = await manager.listPartitions();
+  check('unlocked: the site list comes back', unlockedParts.length > 0);
+
+  section('16) the permission store is encrypted at rest');
+  const permPath = path.join(DATA_DIR, 'vault-permissions.enc');
+  check('the store is written to the encrypted filename', fs.existsSync(permPath));
+  const permBytes = fs.readFileSync(permPath);
+  check('it carries the encrypted-format header', permBytes.subarray(0, 4).toString() === 'VLT1');
+  check(
+    'no site origin appears in the file bytes',
+    !permBytes.includes('iconic.example') && !permBytes.includes('plain.example'),
+  );
+  check('no pinned icon appears in the file bytes', !permBytes.includes('data:image/png'));
+  check('the legacy plaintext file is not left behind', !fs.existsSync(path.join(DATA_DIR, 'vault-permissions.json')));
+  check('it is 0600', (fs.statSync(permPath).mode & 0o777) === 0o600);
+
+  // Round-trip through a cold load (cache dropped, decrypt path exercised).
+  permsStore._resetCache();
+  check('grants survive a decrypt-on-load round-trip', permsStore.getPermission('web:iconic.example') !== null);
+
+  // A profile carried over from before encryption must migrate, not be lost.
+  const legacyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-legacy-'));
+  const realDataDir = DATA_DIR_REF.value;
+  DATA_DIR_REF.value = legacyDir;
+  permsStore._resetCache();
+  fs.writeFileSync(
+    path.join(legacyDir, 'vault-permissions.json'),
+    JSON.stringify({ 'web:legacy.example': { namespace: 'web:legacy.example', origin: 'https://legacy.example', methods: [], fields: [] } }),
+  );
+  const migrated = permsStore.getPermission('web:legacy.example');
+  check('a legacy plaintext store is migrated on load', migrated !== null && migrated.origin === 'https://legacy.example');
+  check('migration encrypts the file', fs.readFileSync(path.join(legacyDir, 'vault-permissions.enc')).subarray(0, 4).toString() === 'VLT1');
+  check('migration deletes the plaintext original', !fs.existsSync(path.join(legacyDir, 'vault-permissions.json')));
+
+  // No OS keyring (Linux without libsecret): label the file honestly rather than
+  // pretending it is encrypted.
+  encryptionAvailable = false;
+  permsStore._resetCache();
+  permsStore.grantPermission('web:nokeyring.example', { origin: 'https://nokeyring.example', methods: [], fields: [] }, clock);
+  check(
+    'without OS encryption the file is written as declared plaintext',
+    fs.readFileSync(path.join(legacyDir, 'vault-permissions.enc')).subarray(0, 4).toString() === 'VLT0',
+  );
+  encryptionAvailable = true;
+  DATA_DIR_REF.value = realDataDir;
+  permsStore._resetCache();
+  fs.rmSync(legacyDir, { recursive: true, force: true });
+
+  section('17) export seals the site list (not just the data)');
+  const exportPath2 = path.join(DATA_DIR, 'export2.json');
+  saveDialogPath = exportPath2;
+  await manager.exportToFile();
+  saveDialogPath = null;
+  const exportText = fs.readFileSync(exportPath2, 'utf8');
+  check('the bundle is the v2 format', JSON.parse(exportText).format === 'vault3r-data-export/2');
+  check('the exported bundle carries no cleartext site list', !exportText.includes('iconic.example') && !exportText.includes('plain.example'));
+  check('the exported bundle carries no cleartext icon', !exportText.includes('data:image/png'));
+
+  const bundle2 = JSON.parse(exportText);
+  const wipedGrants = Object.keys(permsStore.loadPermissions()).length;
+  permsStore.replaceAll({});
+  const restored = await manager.importAll(bundle2);
+  check('import restores the sealed grants', restored.restoredGrants === wipedGrants && restored.restoredGrants > 0);
+  check('a restored site is listed again', (await manager.listHomeTiles()).tiles.some((t) => t.namespace === 'web:iconic.example'));
+
+  unlocked = false;
+  let exportBlocked = false;
+  try {
+    await manager.exportAll();
+  } catch (e) {
+    exportBlocked = e.code === 4312;
+  }
+  check('export while locked is refused (it would seal nothing)', exportBlocked);
+  unlocked = true;
+
+  // A bundle from a different vault must not silently half-restore.
+  const foreign = { ...bundle2, permissionsSealed: Buffer.from(Buffer.from(bundle2.permissionsSealed, 'base64').map((b, i) => (i === 60 ? b ^ 0xff : b))).toString('base64') };
+  let foreignRejected = false;
+  try {
+    await manager.importAll(foreign);
+  } catch (e) {
+    foreignRejected = e.code === 4310;
+  }
+  check('a tampered/foreign permission blob fails closed', foreignRejected);
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`RESULT: ${pass} passed, ${fail} failed`);

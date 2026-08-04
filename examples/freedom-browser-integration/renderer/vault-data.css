@@ -147,3 +147,39 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* --- locked view ----------------------------------------------------------- */
+/* Shown INSTEAD of the whole pane while the vault is locked: no usage, no site
+   list, no counts. The set of sites you hold data for is history-shaped, so a
+   locked vault shows an unlock prompt and nothing else (same rule as the
+   freedom://dapps launcher). */
+
+.vault-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.vault-locked-icon {
+  font-size: 26px;
+  opacity: 0.7;
+}
+
+.vault-locked-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text, #e8e8ea);
+}
+
+.vault-locked-text {
+  font-size: 12.5px;
+  color: var(--text-dim, #8a8a94);
+  max-width: 260px;
+}
+
+.vault-locked .vault-btn {
+  margin-top: 6px;
+}

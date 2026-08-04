@@ -1,0 +1,190 @@
+/*
+ * VAULT HOME — launcher page styles (`vault://home`).
+ *
+ * Uses the browser's existing sidebar tokens where they exist (--bg, --text,
+ * --text-dim, --border, --accent, --surface) with fallbacks so the page still
+ * renders standalone. Copy to `src/renderer/styles/vault-home.css`.
+ */
+
+.vh-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+  color: var(--text, #e8e8ea);
+  background: var(--bg, #131316);
+  min-height: 100vh;
+  box-sizing: border-box;
+  font-family: var(--font, system-ui, -apple-system, 'Segoe UI', sans-serif);
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* --- header ---------------------------------------------------------------- */
+
+.vh-header {
+  margin-bottom: 32px;
+  text-align: center;
+}
+
+.vh-title {
+  margin: 0 0 6px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.vh-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim, #8a8a94);
+  min-height: 18px;
+}
+
+/* --- locked state ---------------------------------------------------------- */
+
+.vh-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 72px 24px;
+  border: 1px solid var(--border, #2a2a31);
+  border-radius: 14px;
+  background: var(--surface, #1a1a1f);
+}
+
+.vh-locked-icon {
+  font-size: 30px;
+  opacity: 0.75;
+}
+
+.vh-locked-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim, #8a8a94);
+}
+
+.vh-unlock-btn {
+  padding: 9px 22px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--bg, #131316);
+  background: var(--accent, #7c9cff);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.vh-unlock-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.vh-unlock-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* --- grid ------------------------------------------------------------------ */
+
+.vh-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 20px 12px;
+}
+
+.vh-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 6px 12px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.vh-tile:hover,
+.vh-tile:focus-visible {
+  background: var(--surface, #1a1a1f);
+  border-color: var(--border, #2a2a31);
+  outline: none;
+}
+
+.vh-tile:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.vh-tile-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  object-fit: cover;
+  /* Site-supplied art sits on a neutral plate so a transparent or near-background
+     icon can't disappear into the page. */
+  background: var(--surface, #1a1a1f);
+  border: 1px solid var(--border, #2a2a31);
+  box-sizing: border-box;
+}
+
+/* Monogram fallback — hue is set per tile from the namespace hash. */
+.vh-tile-monogram {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 600;
+  color: hsl(var(--vh-hue, 0) 70% 88%);
+  background: hsl(var(--vh-hue, 0) 42% 32%);
+  border-color: hsl(var(--vh-hue, 0) 42% 42%);
+}
+
+.vh-tile-name {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text, #e8e8ea);
+  /* Two lines max, then ellipsis — a long claimed name must not reflow the grid. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* --- empty state ----------------------------------------------------------- */
+
+.vh-empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--text-dim, #8a8a94);
+  font-size: 14px;
+}
+
+.vh-empty-hint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  opacity: 0.8;
+}
+
+/* Light theme, if the browser exposes one. */
+@media (prefers-color-scheme: light) {
+  .vh-page {
+    color: var(--text, #1a1a1f);
+    background: var(--bg, #fbfbfd);
+  }
+
+  .vh-tile-monogram {
+    color: hsl(var(--vh-hue, 0) 60% 26%);
+    background: hsl(var(--vh-hue, 0) 60% 88%);
+    border-color: hsl(var(--vh-hue, 0) 45% 74%);
+  }
+}
