@@ -52,6 +52,13 @@ const M = {
   getPermissions: 'vault_getPermissions',
 };
 
+// Methods every grant carries, whatever the site asked for. The engine gates
+// `vault_getPermissions` on its own presence in the granted method list, so a
+// site that requests only read/write scopes cannot read back the grant it
+// already holds — a confusing failure that leaks nothing when allowed, since
+// the caller is asking about permissions it was itself given.
+const ALWAYS_GRANTED_METHODS = [M.getPermissions];
+
 class DataVaultManager {
   /**
    * @param {object} deps
@@ -76,14 +83,22 @@ class DataVaultManager {
    * @param {{ createFromBuffer: Function }} [deps.nativeImage]
    *   Electron's `nativeImage`, used to re-encode site-supplied icons. Omitted in
    *   headless tests, where validated original bytes are kept instead.
+   * @param {() => void} [deps.onActivity]
+   *   Report that a dapp is actively using the vault, so the host can push out
+   *   its auto-lock timer. Supplied by the host (freedom-browser calls
+   *   `resetVaultAutoLockTimer`). Without it a site whose only vault traffic is
+   *   get/set/patch/subscribe is invisible to the timer and gets locked out
+   *   mid-session — the writes themselves being what the timer is meant to
+   *   notice. Hosts that gate publishing on the same lock should wire both.
    * @param {() => number} [deps.now]  Injectable clock (tests).
    */
-  constructor({ dataDir, identityVault, promptConsent, openUrl, isHomeFrame, nativeImage, now }) {
+  constructor({ dataDir, identityVault, promptConsent, openUrl, isHomeFrame, nativeImage, onActivity, now }) {
     this._now = now || (() => Date.now());
     this._promptConsent = promptConsent;
     this._openUrl = openUrl || null;
     this._isHomeFrame = typeof isHomeFrame === 'function' ? isHomeFrame : null;
     this._nativeImage = nativeImage || null;
+    this._onActivity = typeof onActivity === 'function' ? onActivity : () => {};
     this._storage = new DataVaultStorage(dataDir);
     this._keystore = new DataVaultKeystore(identityVault);
 
@@ -170,17 +185,25 @@ class DataVaultManager {
       const sessionId = params && params.sessionId;
       this._requireOwnedSession(event, origin, sessionId);
 
+      // Every successful data-plane call is dapp activity. Hosts with an
+      // auto-lock timer must hear about it, or using the vault is the one thing
+      // that does NOT keep the vault alive.
+      const active = (value) => {
+        this._onActivity();
+        return value;
+      };
+
       switch (method) {
         case M.getData:
-          return ok(await this._engine.localGet(sessionId, params.paths || []));
+          return ok(active(await this._engine.localGet(sessionId, params.paths || [])));
         case M.setData:
-          return ok(await this._engine.localSet(sessionId, params.values || {}, params.baseVersion));
+          return ok(active(await this._engine.localSet(sessionId, params.values || {}, params.baseVersion)));
         case M.patchData:
-          return ok(await this._engine.localPatch(sessionId, params.ops || [], params.baseVersion));
+          return ok(active(await this._engine.localPatch(sessionId, params.ops || [], params.baseVersion)));
         case M.subscribe:
-          return ok(await this._engine.localSubscribe(sessionId, params.paths || []));
+          return ok(active(await this._engine.localSubscribe(sessionId, params.paths || [])));
         case M.unsubscribe:
-          return ok(await this._engine.localUnsubscribe(sessionId, params.subscriptionId));
+          return ok(active(await this._engine.localUnsubscribe(sessionId, params.subscriptionId)));
         case M.revoke: {
           const r = await this._engine.localRevoke(sessionId);
           this._sessions.delete(sessionId);
@@ -236,7 +259,7 @@ class DataVaultManager {
     if (remembered && covers(remembered, requestedMethods, requestedFields)) {
       return {
         approved: true,
-        grantedMethods: remembered.methods,
+        grantedMethods: withAlwaysGranted(remembered.methods),
         grantedFields: remembered.fields,
         writePolicy: remembered.writePolicy,
       };
@@ -261,18 +284,20 @@ class DataVaultManager {
         previousGrant: remembered || null,
       });
       if (decision && decision.approved) {
+        const grantedMethods = withAlwaysGranted(decision.grantedMethods || requestedMethods);
         perms.grantPermission(
           namespace,
           {
             origin: req.verification.domain,
             appMetadata: claimed.appMetadata,
             icon: claimed.icon,
-            methods: decision.grantedMethods || requestedMethods,
+            methods: grantedMethods,
             fields: decision.grantedFields || requestedFields,
             writePolicy: decision.writePolicy,
           },
           this._now(),
         );
+        return { ...decision, grantedMethods };
       }
       return decision || { approved: false, reason: 'no decision' };
     })();
@@ -610,8 +635,12 @@ function flattenFields(scopes) {
   return out;
 }
 /** Does a remembered grant cover everything now requested? (method + field paths) */
+/** Add the methods every grant carries to `methods`, without duplicating them. */
+function withAlwaysGranted(methods) {
+  return [...new Set([...(methods || []), ...ALWAYS_GRANTED_METHODS])];
+}
 function covers(remembered, methods, fields) {
-  const have = new Set(remembered.methods || []);
+  const have = new Set(withAlwaysGranted(remembered.methods));
   if (!methods.every((m) => have.has(m))) return false;
   const havePaths = new Set((remembered.fields || []).map((f) => f.path));
   return fields.every((f) => havePaths.has(f.path));

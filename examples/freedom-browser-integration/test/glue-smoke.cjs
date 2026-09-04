@@ -118,11 +118,14 @@ const permsStore = require(path.join(GLUE, 'data-vault-permissions.js'));
 const openedUrls = [];
 
 let clock = 1_760_000_000_000;
+// Counts every onActivity report so the auto-lock keep-alive can be asserted.
+let activityReports = 0;
 const manager = new DataVaultManager({
   dataDir: DATA_DIR,
   identityVault,
   promptConsent,
   openUrl: (url) => openedUrls.push(url),
+  onActivity: () => { activityReports += 1; },
   now: () => clock,
 });
 
@@ -571,6 +574,51 @@ function section(t) {
     foreignRejected = e.code === 4310;
   }
   check('a tampered/foreign permission blob fails closed', foreignRejected);
+
+  section('18) grant introspection and auto-lock keep-alive');
+
+  // A site that never asked for vault_getPermissions must still be able to read
+  // back the grant it holds — the engine gates that method on its own presence
+  // in the granted list, so the manager adds it to every grant.
+  // promptConsent auto-approves exactly what was asked for — so the granted
+  // method list here is precisely the two below, and getPermissions must be
+  // added by the manager rather than by the consent decision.
+  const introspector = makeSender(90, 'https://introspect.example/app');
+  const introRes = await manager._onRequest(introspector, {
+    method: 'vault_connect',
+    params: {
+      appMetadata: { name: 'Introspector' },
+      requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/profile', read: true, write: true }] }],
+    },
+  });
+  const introSession = introRes.result && introRes.result.sessionId;
+  check('connect without vault_getPermissions succeeds', !!introSession);
+
+  const permsRes = await manager._onRequest(introspector, {
+    method: 'vault_getPermissions',
+    params: { sessionId: introSession },
+  });
+  check('the site can read back its own grant anyway', !permsRes.error && !!permsRes.result);
+
+  // Data-plane traffic is what an idle-lock timer must notice; without this the
+  // one thing that does NOT keep the vault alive is using the vault.
+  const before = activityReports;
+  await manager._onRequest(introspector, {
+    method: 'vault_setData',
+    params: { sessionId: introSession, values: { '/profile/handle': '@intro' } },
+  });
+  await manager._onRequest(introspector, {
+    method: 'vault_getData',
+    params: { sessionId: introSession, paths: ['/profile/handle'] },
+  });
+  check('successful data-plane calls report activity', activityReports === before + 2);
+
+  const beforeFailed = activityReports;
+  await manager._onRequest(introspector, {
+    method: 'vault_getData',
+    params: { sessionId: 'not-a-session', paths: ['/profile/handle'] },
+  });
+  check('a rejected call reports no activity', activityReports === beforeFailed);
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`RESULT: ${pass} passed, ${fail} failed`);

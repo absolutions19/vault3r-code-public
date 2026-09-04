@@ -166,6 +166,11 @@ const vault = new DataVaultManager({
     //   { approved, grantedMethods?, grantedFields?, writePolicy? }
     return showVaultConsentModal(payload);
   },
+  // If your vault auto-locks on idle, wire this: every successful data-plane
+  // call reports through it. Skip it and a site whose only vault traffic is
+  // get/set/patch/subscribe is invisible to the timer and gets locked out
+  // mid-session — the writes themselves being what should keep it alive.
+  onActivity: () => resetVaultAutoLockTimer(),
 });
 app.whenReady().then(() => vault.register());
 ```
@@ -262,6 +267,9 @@ browser actually observed**, and why nothing destructive lives on the launcher.
 const { sessionId } = await window.vault.connect({
   appMetadata: { name: 'My dApp', icon: 'data:image/png;base64,…' },
   requestedScopes: [{
+    // `vault_getPermissions` is granted with every grant, asked for or not —
+    // introspecting a grant you already hold tells you nothing new. List the
+    // methods you actually call.
     methods: ['vault_getData', 'vault_setData', 'vault_subscribe'],
     fields: [
       { path: '/profile', read: true, write: true },
