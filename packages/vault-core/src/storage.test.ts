@@ -135,4 +135,30 @@ describe("document store anti-rollback", () => {
       code: ErrorCode.KeyInvalidated,
     });
   });
+
+  it("deleteNamespace leaves the blob alone when the manifest cannot be opened", async () => {
+    const ks = new InMemoryKeystore();
+    const storage = new InMemoryStorage();
+    const store = new DocumentStore(ks, storage);
+    await store.save("ns-a", { x: 1 }, 1);
+    // A torn or tampered manifest. Deleting the blob first would leave a manifest
+    // that still expects it — the bricked state deleteNamespace exists to avoid.
+    await storage.put("manifest", new Uint8Array([1, 2, 3, 4]));
+
+    await expect(store.deleteNamespace("ns-a")).rejects.toMatchObject({ code: ErrorCode.KeyInvalidated });
+    expect(await storage.get("doc:ns-a")).not.toBeNull();
+  });
+
+  it("deleteNamespace still removes blob and manifest entry on the happy path", async () => {
+    const ks = new InMemoryKeystore();
+    const storage = new InMemoryStorage();
+    const store = new DocumentStore(ks, storage);
+    await store.save("ns-a", { x: 1 }, 1);
+
+    await store.deleteNamespace("ns-a");
+
+    expect(await storage.get("doc:ns-a")).toBeNull();
+    // Absent from the manifest too: a later load is "never existed", not rollback.
+    expect(await store.load("ns-a")).toEqual({ doc: {}, version: 0 });
+  });
 });

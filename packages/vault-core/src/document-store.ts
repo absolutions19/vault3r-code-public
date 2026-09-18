@@ -43,10 +43,41 @@ export function etagToVersion(etag: string | undefined): number | undefined {
 }
 
 export class DocumentStore {
+  /**
+   * Every mutation runs through this one queue. A per-namespace lock would not
+   * be enough, for two reasons:
+   *
+   *  1. `save` does a read-modify-write on the SHARED manifest, so two saves to
+   *     different namespaces can each load the manifest, each add their own
+   *     entry, and the second write drops the first's.
+   *  2. Nothing lets the store assume the adapter makes overlapping writes to
+   *     one key atomic against each other; a real filesystem adapter with a
+   *     shared temp path tore blobs in practice.
+   *
+   * Vault writes are small and rare — a dapp saving a profile — so strict
+   * serialisation costs nothing measurable and is obviously correct.
+   */
+  private writeQueue: Promise<unknown> = Promise.resolve();
+
   constructor(
     private readonly keystore: KeystoreAdapter,
     private readonly storage: StorageAdapter,
   ) {}
+
+  /**
+   * Run `fn` after every previously queued mutation has settled, and before any
+   * queued after it. Callers that do load → modify → `save` MUST wrap the whole
+   * sequence, or two of them can both load the same version and the second save
+   * silently discards the first's changes.
+   */
+  serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(fn, fn);
+    this.writeQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   private async loadManifest(): Promise<Record<string, number>> {
     const blob = await this.storage.get(MANIFEST_KEY);
@@ -77,7 +108,10 @@ export class DocumentStore {
     return { doc: parsed.doc, version: parsed.v };
   }
 
-  /** Persist a new version of a namespace document and advance the manifest. */
+  /**
+   * Persist a new version of a namespace document and advance the manifest.
+   * Call only inside `serialize` — see the note there.
+   */
   async save(storageKey: string, doc: Json, newVersion: number): Promise<void> {
     const payload: SealedDoc = { v: newVersion, doc };
     const blob = await this.keystore.sealNamespace(storageKey, docAad(storageKey), utf8ToBytes(JSON.stringify(payload)));
@@ -93,13 +127,20 @@ export class DocumentStore {
    * later absence as "never existed" rather than a rollback/deletion attack. This
    * is the ONLY legitimate way to drop a namespace; a bare `storage.delete` would
    * leave the manifest expecting the blob and brick every future load.
+   *
+   * The manifest is loaded BEFORE the blob is removed. In the other order, a
+   * manifest that fails to open leaves the blob already gone with the manifest
+   * still expecting it — the exact bricked state this method exists to prevent.
+   * Serialised with every other mutation.
    */
   async deleteNamespace(storageKey: string): Promise<void> {
-    await this.storage.delete(docStorageId(storageKey));
-    const manifest = await this.loadManifest();
-    if (storageKey in manifest) {
-      delete manifest[storageKey];
-      await this.saveManifest(manifest);
-    }
+    await this.serialize(async () => {
+      const manifest = await this.loadManifest();
+      await this.storage.delete(docStorageId(storageKey));
+      if (storageKey in manifest) {
+        delete manifest[storageKey];
+        await this.saveManifest(manifest);
+      }
+    });
   }
 }

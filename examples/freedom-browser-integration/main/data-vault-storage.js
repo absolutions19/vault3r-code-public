@@ -13,6 +13,7 @@
  * key, and guard against path traversal defensively.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -59,11 +60,22 @@ class DataVaultStorage {
     const p = this._pathFor(key);
     // Atomic replace: write to a temp file then rename, so a crash mid-write can
     // never leave a half-sealed blob the engine would reject.
-    const tmp = `${p}.tmp`;
-    await fs.promises.writeFile(tmp, Buffer.from(value.buffer, value.byteOffset, value.byteLength), {
-      mode: 0o600,
-    });
-    await fs.promises.rename(tmp, p);
+    //
+    // The temp name is unique per write. A shared `${p}.tmp` let two overlapping
+    // writers of one key truncate each other's temp file mid-write, and whichever
+    // rename ran first moved a partial blob over the real one — an AEAD tag can't
+    // verify truncated ciphertext, so the partition read as tampered-with from
+    // then on. With unique names each writer renames only its own complete file.
+    const tmp = `${p}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    try {
+      await fs.promises.writeFile(tmp, Buffer.from(value.buffer, value.byteOffset, value.byteLength), {
+        mode: 0o600,
+      });
+      await fs.promises.rename(tmp, p);
+    } catch (err) {
+      await fs.promises.unlink(tmp).catch(() => {});
+      throw err;
+    }
   }
 
   async delete(key) {

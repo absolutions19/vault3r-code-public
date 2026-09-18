@@ -620,6 +620,29 @@ function section(t) {
   });
   check('a rejected call reports no activity', activityReports === beforeFailed);
 
+  section('19) overlapping writes to one storage key never leave a torn file');
+
+  // The reported bricking: DataVaultStorage.put wrote every writer of a key to
+  // the SAME `${p}.tmp`, so two in-flight writes truncated each other and a
+  // partial blob got renamed over the real one. Fire many overlapping puts of
+  // distinguishable payloads at one key and require the survivor to be one of
+  // them, whole. Real files, real rename — this is not reproducible in memory.
+  const { DataVaultStorage } = require(path.join(GLUE, 'data-vault-storage.js'));
+  const raceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vault-race-'));
+  const raceStore = new DataVaultStorage(raceDir);
+  const payloads = Array.from({ length: 12 }, (_, i) => Buffer.alloc(64 * 1024, i + 1));
+  let tornTrials = 0;
+  for (let trial = 0; trial < 20; trial++) {
+    await Promise.all(payloads.map((buf) => raceStore.put('doc:race', new Uint8Array(buf))));
+    const survivor = Buffer.from(await raceStore.get('doc:race'));
+    const intact = payloads.some((buf) => buf.equals(survivor));
+    if (!intact) tornTrials++;
+  }
+  check('every trial leaves one complete payload on disk (0 torn)', tornTrials === 0);
+  const leftovers = fs.readdirSync(path.join(raceDir, 'vault-data')).filter((f) => f.endsWith('.tmp'));
+  check('no temp files are left behind', leftovers.length === 0);
+  fs.rmSync(raceDir, { recursive: true, force: true });
+
   console.log(`\n${'='.repeat(52)}`);
   console.log(`RESULT: ${pass} passed, ${fail} failed`);
   console.log('='.repeat(52));

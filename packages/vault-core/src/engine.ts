@@ -474,6 +474,27 @@ export class VaultEngine {
       session.writeApprovedThisSession = true;
     }
 
+    // Everything from the load to the save is one read-modify-write and runs
+    // under the store's write queue. Two concurrent writers to one namespace
+    // would otherwise both load the same version and the second save would
+    // silently discard the first's changes — and, on an adapter whose
+    // overlapping writes tear, corrupt the blob outright. The biometric prompt
+    // above deliberately stays OUTSIDE the queue: a user sitting on an approval
+    // sheet must not block every other site's writes.
+    const { doc, changedPaths, newVersion } = await this.docStore.serialize(() =>
+      this.applyChangesLocked(session, changes, values, baseVersion),
+    );
+    this.fanOutChanges(session, changedPaths, doc, newVersion);
+    return newVersion;
+  }
+
+  /** The serialised half of applyChanges: load, apply, validate, save. */
+  private async applyChangesLocked(
+    session: Session,
+    changes: ChangeDescriptor[],
+    values: Record<string, unknown>,
+    baseVersion: string | undefined,
+  ): Promise<{ doc: Json; changedPaths: string[]; newVersion: number }> {
     const loaded = await this.docStore.load(session.storageKey);
     const baseV = etagToVersion(baseVersion);
     if (baseV !== undefined && baseV !== loaded.version) {
@@ -521,8 +542,7 @@ export class VaultEngine {
 
     const newVersion = loaded.version + 1;
     await this.docStore.save(session.storageKey, doc, newVersion);
-    this.fanOutChanges(session, changedPaths, doc, newVersion);
-    return newVersion;
+    return { doc, changedPaths, newVersion };
   }
 
   private fanOutChanges(source: Session, changedPaths: string[], doc: Json, version: number): void {

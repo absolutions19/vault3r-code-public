@@ -318,3 +318,93 @@ describe("VaultEngine — owner/admin plane (vault management UI)", () => {
     await expectCode(engine.localGet(p.sessionId, ["/profile/name"]), "Disconnected");
   });
 });
+
+describe("VaultEngine — concurrent writes", () => {
+  /** Read/write on every path the tests below touch (a grant on `/` is not a wildcard). */
+  const paths = ["/profile", "/prefs", "/v", ...Array.from({ length: 8 }, (_, i) => `/k${i}`)];
+  const open: RequestedScope[] = [{ methods: ALL_METHODS, fields: paths.map((path) => ({ path, read: true, write: true })) }];
+
+  /**
+   * A storage adapter that yields to the event loop on every operation, so two
+   * in-flight writers genuinely interleave the way real file I/O does. Without
+   * the queue, both load version N and the second save discards the first.
+   */
+  class SlowStorage extends InMemoryStorage {
+    override async get(key: string) {
+      await new Promise((r) => setTimeout(r, 1));
+      return super.get(key);
+    }
+    override async put(key: string, value: Uint8Array) {
+      await new Promise((r) => setTimeout(r, 1));
+      return super.put(key, value);
+    }
+  }
+
+  function slowEngine() {
+    return new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-race" }),
+      storage: new SlowStorage(),
+      resolver: new StaticIdentityResolver(),
+      consent: new AutoConsent(),
+      clock,
+    });
+  }
+
+  it("two sessions writing different paths of one namespace lose nothing", async () => {
+    const engine = slowEngine();
+    // Two tabs on the same origin: two sessions, one namespace.
+    const tab1 = await engine.connectLocal({ origin: "https://race.example", appMetadata: {}, requestedScopes: open });
+    const tab2 = await engine.connectLocal({ origin: "https://race.example", appMetadata: {}, requestedScopes: open });
+
+    await Promise.all([
+      engine.localSet(tab1.sessionId, { "/profile": { name: "alice" } }),
+      engine.localSet(tab2.sessionId, { "/prefs": { theme: "dark" } }),
+    ]);
+
+    const g = await engine.localGet(tab1.sessionId, ["/profile", "/prefs"]);
+    expect(g.values["/profile"]).toEqual({ name: "alice" });
+    expect(g.values["/prefs"]).toEqual({ theme: "dark" });
+    expect(g.version).toBe("etag:2");
+  });
+
+  it("a burst of writes from one session all land, in order", async () => {
+    const engine = slowEngine();
+    const s = await engine.connectLocal({ origin: "https://burst.example", appMetadata: {}, requestedScopes: open });
+
+    await Promise.all(Array.from({ length: 8 }, (_, i) => engine.localSet(s.sessionId, { [`/k${i}`]: i })));
+
+    const g = await engine.localGet(s.sessionId, Array.from({ length: 8 }, (_, i) => `/k${i}`));
+    for (let i = 0; i < 8; i++) expect(g.values[`/k${i}`]).toBe(i);
+    expect(g.version).toBe("etag:8");
+  });
+
+  it("writes to different namespaces do not drop each other's manifest entry", async () => {
+    const engine = slowEngine();
+    const a = await engine.connectLocal({ origin: "https://a.example", appMetadata: {}, requestedScopes: open });
+    const b = await engine.connectLocal({ origin: "https://b.example", appMetadata: {}, requestedScopes: open });
+
+    await Promise.all([
+      engine.localSet(a.sessionId, { "/v": "a" }),
+      engine.localSet(b.sessionId, { "/v": "b" }),
+    ]);
+    // A second round exposes a lost manifest entry: the anti-rollback check
+    // compares each blob's version to the manifest's expectation.
+    await Promise.all([
+      engine.localSet(a.sessionId, { "/v": "a2" }),
+      engine.localSet(b.sessionId, { "/v": "b2" }),
+    ]);
+
+    expect((await engine.localGet(a.sessionId, ["/v"])).values["/v"]).toBe("a2");
+    expect((await engine.localGet(b.sessionId, ["/v"])).values["/v"]).toBe("b2");
+  });
+
+  it("a failed write does not wedge the queue for the next one", async () => {
+    const engine = slowEngine();
+    const s = await engine.connectLocal({ origin: "https://wedge.example", appMetadata: {}, requestedScopes: open });
+    await engine.localSet(s.sessionId, { "/v": 1 });
+
+    await expectCode(engine.localSet(s.sessionId, { "/v": 2 }, "etag:99"), "VersionConflict");
+    const w = await engine.localSet(s.sessionId, { "/v": 3 });
+    expect(w.version).toBe("etag:2");
+  });
+});
