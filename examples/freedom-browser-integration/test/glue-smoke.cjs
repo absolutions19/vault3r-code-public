@@ -248,8 +248,12 @@ function section(t) {
   const r = await call(SITE_A, 'vault_getData', { sessionId: connA.sessionId, paths: ['/profile/handle'] });
   check('read returns the written value', r.values['/profile/handle'] === '@alice');
   const files = fs.readdirSync(path.join(DATA_DIR, 'vault-data')).filter((f) => f.endsWith('.bin'));
+  const keys = files.map((f) => decodeURIComponent(f.slice(0, -4)));
   const docFile = files.find((f) => decodeURIComponent(f.slice(0, -4)).startsWith('doc:'));
-  check('a sealed doc blob + manifest exist on disk', !!docFile && files.length === 2);
+  // doc blob + sealed manifest + the cleartext owner fingerprint that lets a
+  // later auth failure be attributed to "different identity" vs "corrupt".
+  check('a sealed doc blob + manifest + owner fingerprint exist on disk',
+    !!docFile && keys.includes('manifest') && keys.includes('manifest-owner') && files.length === 3);
   const raw = fs.readFileSync(path.join(DATA_DIR, 'vault-data', docFile));
   check('the blob is ciphertext, not plaintext JSON', !raw.toString('utf8').includes('@alice'));
 

@@ -539,8 +539,22 @@ class DataVaultManager {
   async getPartitionData(namespace) {
     if (!this._keystore.isUnlocked()) return { namespace, locked: true };
     const storageKey = storageKeyForNamespace(namespace);
-    const data = await this._engine.adminReadPartition(storageKey);
     const bytes = await this._storage.byteSize(`doc:${storageKey}`);
+    let data;
+    try {
+      data = await this._engine.adminReadPartition(storageKey);
+    } catch (err) {
+      // A blob that will not open is a state the pane must describe, not an
+      // exception to swallow into "Error: …". The engine names the cause when it
+      // can (see DocumentStore's owner fingerprint): sealed by a different
+      // identity, corrupt under this one, or unknown for stores written before
+      // fingerprints existed. Anything else is a real failure and propagates.
+      if (err && err.codeName === 'KeyInvalidated') {
+        const reason = (err.data && err.data.reason) || 'unknown';
+        return { namespace, locked: false, bytes, unreadable: { reason, message: err.message } };
+      }
+      throw err;
+    }
     return { namespace, locked: false, data, bytes };
   }
 

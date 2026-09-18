@@ -37,6 +37,12 @@ export function normalizeHost(input: string): string {
   return hostname;
 }
 
+/** `localhost` or any `*.localhost` name — reserved for loopback by RFC 6761. */
+export function isLoopbackName(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.+$/, "");
+  return h === "localhost" || h.endsWith(".localhost");
+}
+
 /** The registrable domain (eTLD+1) of a host, or null if not derivable. */
 export function registrableDomain(host: string): string | null {
   return getDomain(host);
@@ -168,7 +174,19 @@ export function deriveOriginNamespace(
 
   const scheme = url.protocol.replace(/:$/, "").toLowerCase();
   if (scheme === "http" || scheme === "https") {
-    return deriveNamespace(url.hostname, granularity);
+    const derived = deriveNamespace(url.hostname, granularity);
+    // RFC 6761 loopback names (`*.localhost`) are development hosts: several
+    // servers routinely share one hostname and differ only by port, and two dev
+    // servers must not share — and race on — one partition. The port is part of
+    // the key for those hosts only; a real origin keeps it out so its namespace
+    // stays stable across deployments. `url.port` is empty for a scheme's
+    // default port, so `http://app.localhost` and `:80` still agree.
+    if (url.port.length > 0 && isLoopbackName(url.hostname)) {
+      const canonicalKey = `${derived.canonicalKey}:${url.port}`;
+      const namespace = `${NS_PREFIX_WEB}:${canonicalKey}` as Namespace;
+      return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
+    }
+    return derived;
   }
   if (!DWEB_SCHEMES.has(scheme)) throw new NamespaceError(`unsupported origin scheme: ${scheme}`);
   // A dweb origin must have a real scheme-relative authority (`scheme://authority`);

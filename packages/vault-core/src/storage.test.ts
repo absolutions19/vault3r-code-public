@@ -136,6 +136,83 @@ describe("document store anti-rollback", () => {
     });
   });
 
+  describe("naming why a blob failed to authenticate", () => {
+    // Wrong key and torn ciphertext fail identically at the AEAD; the owner
+    // fingerprint recorded on save is the only thing that tells them apart.
+
+    it("says 'different identity' when a different keystore sealed the store", async () => {
+      const storage = new InMemoryStorage();
+      await new DocumentStore(new InMemoryKeystore({ vaultId: "vault-A" }), storage).save("ns-a", { x: 1 }, 1);
+
+      const other = new DocumentStore(new InMemoryKeystore({ vaultId: "vault-B" }), storage);
+      await expect(other.load("ns-a")).rejects.toMatchObject({
+        code: ErrorCode.KeyInvalidated,
+        data: { reason: "wrong-identity" },
+        message: expect.stringContaining("different identity"),
+      });
+    });
+
+    it("says 'corrupt' when the right identity cannot open a torn blob", async () => {
+      const ks = new InMemoryKeystore({ vaultId: "vault-A" });
+      const storage = new InMemoryStorage();
+      const store = new DocumentStore(ks, storage);
+      await store.save("ns-a", { x: 1 }, 1);
+      // Truncate the sealed blob the way an overlapping write used to.
+      const blob = (await storage.get("doc:ns-a"))!;
+      await storage.put("doc:ns-a", blob.slice(0, blob.length - 8));
+
+      await expect(store.load("ns-a")).rejects.toMatchObject({
+        code: ErrorCode.KeyInvalidated,
+        data: { reason: "corrupt" },
+        message: expect.stringContaining("corrupt"),
+      });
+    });
+
+    it("falls back to 'unknown' for a store written before fingerprints existed", async () => {
+      const ks = new InMemoryKeystore({ vaultId: "vault-A" });
+      const storage = new InMemoryStorage();
+      const store = new DocumentStore(ks, storage);
+      await store.save("ns-a", { x: 1 }, 1);
+      await storage.delete("manifest-owner"); // legacy store: no fingerprint
+      const blob = (await storage.get("doc:ns-a"))!;
+      await storage.put("doc:ns-a", blob.slice(0, blob.length - 8));
+
+      await expect(store.load("ns-a")).rejects.toMatchObject({
+        code: ErrorCode.KeyInvalidated,
+        data: { reason: "unknown" },
+      });
+    });
+
+    it("applies to the manifest as well as to namespace blobs", async () => {
+      const storage = new InMemoryStorage();
+      await new DocumentStore(new InMemoryKeystore({ vaultId: "vault-A" }), storage).save("ns-a", { x: 1 }, 1);
+
+      const other = new DocumentStore(new InMemoryKeystore({ vaultId: "vault-B" }), storage);
+      // load() opens the manifest first, so that is what fails here.
+      await expect(other.load("ns-a")).rejects.toMatchObject({
+        data: { reason: "wrong-identity" },
+        message: expect.stringContaining("manifest"),
+      });
+    });
+
+    it("records the fingerprint once and does not rewrite it on every save", async () => {
+      const ks = new InMemoryKeystore({ vaultId: "vault-A" });
+      const storage = new InMemoryStorage();
+      const puts: string[] = [];
+      const origPut = storage.put.bind(storage);
+      storage.put = async (k, v) => {
+        puts.push(k);
+        return origPut(k, v);
+      };
+      const store = new DocumentStore(ks, storage);
+      await store.save("ns-a", { x: 1 }, 1);
+      await store.save("ns-a", { x: 2 }, 2);
+      await store.save("ns-b", { y: 1 }, 1);
+
+      expect(puts.filter((k) => k === "manifest-owner")).toHaveLength(1);
+    });
+  });
+
   it("deleteNamespace leaves the blob alone when the manifest cannot be opened", async () => {
     const ks = new InMemoryKeystore();
     const storage = new InMemoryStorage();

@@ -7,7 +7,7 @@
  * expects (deletion). The manifest itself is AEAD-sealed, so it cannot be forged.
  */
 
-import { utf8ToBytes, bytesToUtf8 } from "@vault/crypto-core";
+import { utf8ToBytes, bytesToUtf8, sha256, toHex } from "@vault/crypto-core";
 import { VaultError } from "@vault/protocol";
 import type { KeystoreAdapter, StorageAdapter } from "./adapters.js";
 import type { Json } from "./json-pointer.js";
@@ -15,6 +15,23 @@ import type { Json } from "./json-pointer.js";
 const MANIFEST_KEY = "manifest";
 const MANIFEST_STORAGE_KEY = "__vault_manifest__";
 const MANIFEST_AAD = utf8ToBytes("vault-manifest/1");
+
+/**
+ * Cleartext fingerprint of the identity that sealed this store. A blob that fails
+ * to authenticate looks identical whether it was sealed under a different mnemonic
+ * or torn on disk; this is the only way to tell the two apart, and it turned an
+ * hour of chasing a mnemonic that had never changed into a one-line diagnosis.
+ *
+ * Stored as sha256 over the vaultId rather than the vaultId itself, so the value
+ * the signing domain uses is not written in the clear. Any deterministic
+ * fingerprint links two stores sealed under one mnemonic — that linkability is
+ * inherent to the feature and is the price of the diagnosis.
+ */
+const OWNER_KEY = "manifest-owner";
+const OWNER_DOMAIN = "vault-owner/1|";
+
+/** Why a sealed blob failed to open. Surfaced as `VaultError.data.reason`. */
+export type AuthFailureReason = "wrong-identity" | "corrupt" | "unknown";
 
 function docStorageId(storageKey: string): string {
   return `doc:${storageKey}`;
@@ -83,13 +100,56 @@ export class DocumentStore {
     const blob = await this.storage.get(MANIFEST_KEY);
     if (!blob) return {};
     const pt = await this.keystore.openNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, blob);
-    if (pt === null) throw VaultError.of("KeyInvalidated", "manifest failed to authenticate (tampering?)");
+    if (pt === null) throw await this.authFailure("manifest");
     return JSON.parse(bytesToUtf8(pt)) as Record<string, number>;
   }
 
   private async saveManifest(m: Record<string, number>): Promise<void> {
     const blob = await this.keystore.sealNamespace(MANIFEST_STORAGE_KEY, MANIFEST_AAD, utf8ToBytes(JSON.stringify(m)));
     await this.storage.put(MANIFEST_KEY, blob);
+    await this.recordOwner();
+  }
+
+  /** The current keystore's owner fingerprint, or null if it cannot be read (locked). */
+  private ownerFingerprint(): string | null {
+    let id: string;
+    try {
+      id = this.keystore.vaultId();
+    } catch {
+      return null;
+    }
+    if (typeof id !== "string" || id.length === 0) return null;
+    return toHex(sha256(utf8ToBytes(OWNER_DOMAIN + id)));
+  }
+
+  /** Write the owner fingerprint if absent or stale. One read per save; a write only on change. */
+  private async recordOwner(): Promise<void> {
+    const current = this.ownerFingerprint();
+    if (!current) return;
+    const stored = await this.storage.get(OWNER_KEY);
+    if (stored && bytesToUtf8(stored) === current) return;
+    await this.storage.put(OWNER_KEY, utf8ToBytes(current));
+  }
+
+  /**
+   * Build the KeyInvalidated error for a blob that failed to authenticate, naming
+   * the cause when the owner fingerprint lets us: sealed by a different identity,
+   * or corrupt under the right one. `unknown` when no fingerprint was recorded
+   * (stores written before this existed) or the keystore is locked.
+   */
+  private async authFailure(what: "manifest" | "namespace blob"): Promise<VaultError> {
+    const stored = await this.storage.get(OWNER_KEY);
+    const current = this.ownerFingerprint();
+    let reason: AuthFailureReason = "unknown";
+    if (stored && current) reason = bytesToUtf8(stored) === current ? "corrupt" : "wrong-identity";
+
+    const message =
+      reason === "wrong-identity"
+        ? `${what} was sealed under a different identity (mnemonic) than the one unlocked now`
+        : reason === "corrupt"
+          ? `${what} is corrupt — it failed to authenticate under the identity that sealed it`
+          : `${what} failed to authenticate`;
+    return VaultError.of("KeyInvalidated", message, { reason });
   }
 
   /** Load a namespace document, enforcing anti-rollback against the manifest. */
@@ -102,7 +162,7 @@ export class DocumentStore {
       return { doc: {}, version: 0 };
     }
     const pt = await this.keystore.openNamespace(storageKey, docAad(storageKey), blob);
-    if (pt === null) throw VaultError.of("KeyInvalidated", "namespace blob failed to authenticate");
+    if (pt === null) throw await this.authFailure("namespace blob");
     const parsed = JSON.parse(bytesToUtf8(pt)) as SealedDoc;
     if (parsed.v < expected) throw VaultError.of("KeyInvalidated", "namespace blob is stale (rollback)");
     return { doc: parsed.doc, version: parsed.v };

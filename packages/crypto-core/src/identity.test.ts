@@ -87,6 +87,19 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
   it("honors host granularity for http(s) origins", () => {
     expect(deriveOriginNamespace("https://tenant1.saas.com", "host").namespace).toBe("web:tenant1.saas.com");
   });
+  it("keeps the port in the namespace for *.localhost dev hosts only", () => {
+    // Two dev servers on one loopback name must not share (and race on) a partition.
+    expect(deriveOriginNamespace("http://app.localhost:8765").namespace).toBe("web:app.localhost:8765");
+    expect(deriveOriginNamespace("http://app.localhost:8766").namespace).toBe("web:app.localhost:8766");
+    expect(deriveOriginNamespace("http://app.localhost:8765").storageKey).not.toBe(
+      deriveOriginNamespace("http://app.localhost:8766").storageKey,
+    );
+    // The scheme's default port is not a port: `http://app.localhost` and `:80` agree.
+    expect(deriveOriginNamespace("http://app.localhost").namespace).toBe("web:app.localhost");
+    expect(deriveOriginNamespace("http://app.localhost:80").namespace).toBe("web:app.localhost");
+    // Real origins keep the port out so the namespace survives a redeploy on a new port.
+    expect(deriveOriginNamespace("https://example.com:8080").namespace).toBe("web:example.com");
+  });
   it("keys decentralized-web origins on the full canonical authority under web:dweb:", () => {
     // Case-insensitive schemes (names / hex refs) fold to lowercase.
     expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:dweb:bzz:deadbeefcafe");

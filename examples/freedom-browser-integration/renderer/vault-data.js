@@ -159,11 +159,43 @@ export function initVaultData(opts = {}) {
     setView('detail');
     try {
       const res = await window.vaultData.getPartitionData(p.namespace);
-      detailJson.textContent = res.locked
-        ? '🔒 Vault locked — unlock to view stored data.'
-        : JSON.stringify(res.data, null, 2);
+      if (res.locked) {
+        detailJson.textContent = '🔒 Vault locked — unlock to view stored data.';
+      } else if (res.unreadable) {
+        detailJson.textContent = describeUnreadable(res.unreadable);
+      } else {
+        detailJson.textContent = JSON.stringify(res.data, null, 2);
+      }
     } catch (err) {
       detailJson.textContent = `Error: ${err.message}`;
+    }
+  }
+
+  /**
+   * A partition whose sealed blob will not open. Wrong identity and corruption
+   * fail identically at the cipher; the engine tells them apart with the owner
+   * fingerprint it records on save, and each deserves a different next step.
+   */
+  function describeUnreadable({ reason }) {
+    switch (reason) {
+      case 'wrong-identity':
+        return (
+          '⚠ Sealed under a different identity.\n\n' +
+          'This data was written while a different mnemonic was unlocked. ' +
+          'Unlock with that identity to read it, or delete it to start over.'
+        );
+      case 'corrupt':
+        return (
+          '⚠ Stored data is corrupt.\n\n' +
+          'The identity is right but the sealed data failed to verify — most likely a torn write. ' +
+          'It cannot be recovered; delete it so the site can start over.'
+        );
+      default:
+        return (
+          '⚠ Stored data cannot be read.\n\n' +
+          'It failed to verify and the store predates identity fingerprints, so the cause is unknown. ' +
+          'If your mnemonic has not changed, treat it as corrupt and delete it.'
+        );
     }
   }
 

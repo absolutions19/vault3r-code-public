@@ -326,6 +326,16 @@ both.
 - `bzz://…`, `ipfs://…`, `ens://myapp.eth`, `rad://…` → `web:dweb:<scheme>:<authority>`.
   Case is preserved for content-address schemes (`ipfs`/`ipns`/`ar`/`rad`) so
   distinct CIDs never alias; folded only for name/hex schemes (`ens`/`bzz`/`swarm`/`hyper`).
+- `http://app.localhost:8765` → `web:app.localhost:8765`. **The port is part of
+  the namespace for `*.localhost` hosts only.** Two dev servers on one loopback
+  name are two partitions, so they cannot share — or race on — each other's
+  data. Real origins keep the port out, so a redeploy on a new port keeps its
+  namespace. A scheme's default port counts as no port (`http://app.localhost`
+  and `:80` agree).
+
+**Publish under a stable name.** A dweb app served from a raw content reference
+gets a new namespace on every redeploy, and every returning user silently gets
+an empty vault. Publish under an ENS name with a contenthash record instead.
 
 For the richest, transport-stable keying (so `ens://myapp.eth` and
 `bzz://myapp.eth` share one vault, matching the address bar), feed the browser's
