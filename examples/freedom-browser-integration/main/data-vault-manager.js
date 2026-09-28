@@ -235,7 +235,7 @@ class DataVaultManager {
           // nothing, and requiring it in the scope list would reproduce the
           // vault_getPermissions trap — a site cannot request what it did not
           // know to ask for. Holding this session is the authorisation.
-          return ok(await this._requestUnlockForSite(session.namespace));
+          return ok(await this._requestUnlockForSite(session.namespace, session.origin));
         default:
           throw rpcError(4200, `method not supported: ${method}`);
       }
@@ -523,8 +523,8 @@ class DataVaultManager {
   }
 
   /** Ask the host to unlock the identity vault (drives the locked-state button). */
-  async requestUnlock() {
-    const unlocked = await this._keystore.unlock();
+  async requestUnlock(context) {
+    const unlocked = await this._keystore.unlock(context);
     return { unlocked: !!unlocked };
   }
 
@@ -539,7 +539,7 @@ class DataVaultManager {
    * Resolves `{ unlocked }` always; `reason` says why when it is false, so a
    * site can tell "the user said no" from "stop asking".
    */
-  async _requestUnlockForSite(namespace) {
+  async _requestUnlockForSite(namespace, origin) {
     if (this._keystore.isUnlocked()) {
       // Seeing it unlocked — by our prompt, the toolbar, or anything else —
       // ends every embargo: the next lock is a new situation, not a
@@ -560,7 +560,10 @@ class DataVaultManager {
     // One prompt at a time, whoever asks: the vault is global, and two sites
     // racing must not stack two unlock screens on the user.
     if (!this._pendingUnlock) {
-      this._pendingUnlock = this.requestUnlock().finally(() => {
+      // The label is the origin MAIN observed on the sender frame, never
+      // anything the page said — the prompt must not be spoofable into naming
+      // a site the user trusts more than the one actually asking.
+      this._pendingUnlock = this.requestUnlock(hostOfOrigin(origin) || origin).finally(() => {
         this._pendingUnlock = null;
       });
     }

@@ -102,10 +102,14 @@ class DataVaultKeystore {
     return this._identity.isUnlocked();
   }
 
-  async unlock() {
+  /**
+   * @param {string} [context] Who the unlock is for, shown on the host's prompt
+   *   (the host's own flows name the requesting origin; so should ours).
+   */
+  async unlock(context) {
     if (this._identity.isUnlocked()) return true;
     if (typeof this._identity.ensureUnlocked === 'function') {
-      return this._identity.ensureUnlocked();
+      return this._identity.ensureUnlocked(context);
     }
     return false;
   }

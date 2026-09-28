@@ -97,11 +97,14 @@ let unlocked = true;
 // a site cannot turn this into a nuisance surface.
 let unlockPromptAnswer = true;
 let unlockPrompts = 0;
+/** The label each prompt carried — the host shows this, so it must name the asker. */
+let unlockPromptLabels = [];
 const identityVault = {
   isUnlocked: () => unlocked,
   getMnemonic: () => (unlocked ? MNEMONIC : null),
-  ensureUnlocked: async () => {
+  ensureUnlocked: async (context) => {
     unlockPrompts += 1;
+    unlockPromptLabels.push(context ?? null);
     unlocked = unlockPromptAnswer;
     return unlocked;
   },
@@ -678,8 +681,11 @@ function section(t) {
   unlocked = false;
   unlockPromptAnswer = true;
   unlockPrompts = 0;
+  unlockPromptLabels = [];
   ru = await askUnlock();
   check('a locked vault prompts and reports the unlock', ru.result.unlocked === true && unlockPrompts === 1);
+  check('the prompt names the site that asked, not a generic label',
+    unlockPromptLabels[0] === 'unlock.example');
   const afterUnlock = await manager._onRequest(siteU, {
     method: 'vault_getData',
     params: { sessionId: sidU, paths: ['/profile'] },
