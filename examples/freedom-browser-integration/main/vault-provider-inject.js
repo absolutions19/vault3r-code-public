@@ -54,6 +54,9 @@ module.exports = `
     unsubscribe: function (sessionId, subscriptionId) { return call('vault_unsubscribe', { sessionId: sessionId, subscriptionId: subscriptionId }); },
     getPermissions: function (sessionId) { return call('vault_getPermissions', { sessionId: sessionId }); },
     disconnect: function (sessionId) { return call('vault_revoke', { sessionId: sessionId }); },
+    // Ask the user to unlock. Resolves { unlocked, reason? } — never rejects for
+    // a refusal, so a site can branch instead of catching.
+    requestUnlock: function (sessionId) { return call('vault_requestUnlock', { sessionId: sessionId }); },
 
     on: function (event, handler) { if (listeners[event]) listeners[event].push(handler); return this; },
     removeListener: function (event, handler) {

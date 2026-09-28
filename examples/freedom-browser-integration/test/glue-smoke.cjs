@@ -92,10 +92,19 @@ const DATA_DIR_REF = { value: DATA_DIR };
 // A valid BIP-39 test mnemonic (Hardhat's). The keystore only HKDFs it.
 const MNEMONIC = 'test test test test test test test test test test test junk';
 let unlocked = true;
+// Models the user's answer to an unlock prompt, and counts how many prompts the
+// manager actually raises — the point of the vault_requestUnlock policy is that
+// a site cannot turn this into a nuisance surface.
+let unlockPromptAnswer = true;
+let unlockPrompts = 0;
 const identityVault = {
   isUnlocked: () => unlocked,
   getMnemonic: () => (unlocked ? MNEMONIC : null),
-  ensureUnlocked: async () => unlocked,
+  ensureUnlocked: async () => {
+    unlockPrompts += 1;
+    unlocked = unlockPromptAnswer;
+    return unlocked;
+  },
 };
 
 // Auto-approving consent that grants exactly what was requested (first connect),
@@ -646,6 +655,99 @@ function section(t) {
   const leftovers = fs.readdirSync(path.join(raceDir, 'vault-data')).filter((f) => f.endsWith('.tmp'));
   check('no temp files are left behind', leftovers.length === 0);
   fs.rmSync(raceDir, { recursive: true, force: true });
+
+  section('20) a site can ask the user to unlock (vault_requestUnlock)');
+
+  const siteU = makeSender(91, 'https://unlock.example/app');
+  const connU = await manager._onRequest(siteU, {
+    method: 'vault_connect',
+    params: {
+      appMetadata: { name: 'Unlocker' },
+      requestedScopes: [{ methods: ['vault_getData', 'vault_setData'], fields: [{ path: '/profile', read: true, write: true }] }],
+    },
+  });
+  const sidU = connU.result.sessionId;
+  const askUnlock = () => manager._onRequest(siteU, { method: 'vault_requestUnlock', params: { sessionId: sidU } });
+
+  // Already unlocked: answer immediately, raise no prompt.
+  unlockPrompts = 0;
+  let ru = await askUnlock();
+  check('unlocked vault answers without prompting', ru.result.unlocked === true && unlockPrompts === 0);
+
+  // Locked + user approves: one prompt, and the data plane works again after.
+  unlocked = false;
+  unlockPromptAnswer = true;
+  unlockPrompts = 0;
+  ru = await askUnlock();
+  check('a locked vault prompts and reports the unlock', ru.result.unlocked === true && unlockPrompts === 1);
+  const afterUnlock = await manager._onRequest(siteU, {
+    method: 'vault_getData',
+    params: { sessionId: sidU, paths: ['/profile'] },
+  });
+  check('the data plane works again once unlocked', !afterUnlock.error);
+
+  // Locked + user dismisses: reported, not thrown.
+  unlocked = false;
+  unlockPromptAnswer = false;
+  unlockPrompts = 0;
+  ru = await askUnlock();
+  check('a dismissed prompt resolves { unlocked: false, reason: dismissed }',
+    ru.result.unlocked === false && ru.result.reason === 'dismissed');
+
+  // Asking again straight away must not re-prompt.
+  ru = await askUnlock();
+  check('a second ask inside the cooldown does not re-prompt', ru.result.reason === 'cooldown' && unlockPrompts === 1);
+
+  // Past the cooldown it may ask again — but only so many times.
+  clock += 61_000;
+  ru = await askUnlock();
+  check('past the cooldown it prompts again', ru.result.reason === 'dismissed' && unlockPrompts === 2);
+  clock += 61_000;
+  ru = await askUnlock();
+  check('a third dismissal is still allowed', ru.result.reason === 'dismissed' && unlockPrompts === 3);
+  clock += 61_000;
+  ru = await askUnlock();
+  check('after three dismissals the origin is embargoed', ru.result.reason === 'embargoed' && unlockPrompts === 3);
+
+  // A successful unlock is a fresh situation: the embargo lifts.
+  unlockPromptAnswer = true;
+  unlocked = true;
+  await askUnlock();
+  unlocked = false;
+  clock += 61_000;
+  unlockPrompts = 0;
+  ru = await askUnlock();
+  check('an unlock clears the embargo', ru.result.unlocked === true && unlockPrompts === 1);
+
+  // Two sites racing share one prompt rather than stacking two on the user.
+  const siteV = makeSender(92, 'https://unlock2.example/app');
+  const connV = await manager._onRequest(siteV, {
+    method: 'vault_connect',
+    params: {
+      appMetadata: { name: 'Unlocker2' },
+      requestedScopes: [{ methods: ['vault_getData'], fields: [{ path: '/profile', read: true }] }],
+    },
+  });
+  unlocked = false;
+  unlockPromptAnswer = true;
+  unlockPrompts = 0;
+  clock += 61_000;
+  const [unlockA, unlockB] = await Promise.all([
+    askUnlock(),
+    manager._onRequest(siteV, { method: 'vault_requestUnlock', params: { sessionId: connV.result.sessionId } }),
+  ]);
+  check('concurrent asks share one prompt',
+    unlockA.result.unlocked === true && unlockB.result.unlocked === true && unlockPrompts === 1);
+
+  // Without a session there is nothing to authorise the ask.
+  const stranger = makeSender(93, 'https://stranger.example/app');
+  const denied = await manager._onRequest(stranger, {
+    method: 'vault_requestUnlock',
+    params: { sessionId: 'not-a-session' },
+  });
+  check('a caller with no session cannot raise the prompt', denied.error && denied.error.code === 4900);
+  unlocked = true;
+  unlockPromptAnswer = true;
 
   console.log(`\n${'='.repeat(52)}`);
   console.log(`RESULT: ${pass} passed, ${fail} failed`);

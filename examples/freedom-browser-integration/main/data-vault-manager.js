@@ -50,6 +50,7 @@ const M = {
   unsubscribe: 'vault_unsubscribe',
   revoke: 'vault_revoke',
   getPermissions: 'vault_getPermissions',
+  requestUnlock: 'vault_requestUnlock',
 };
 
 // Methods every grant carries, whatever the site asked for. The engine gates
@@ -58,6 +59,19 @@ const M = {
 // already holds — a confusing failure that leaks nothing when allowed, since
 // the caller is asking about permissions it was itself given.
 const ALWAYS_GRANTED_METHODS = [M.getPermissions];
+
+/**
+ * Unlock-prompt policy for `vault_requestUnlock`.
+ *
+ * The prompt is the host's own unlock screen, so a site that could raise it
+ * freely would own a nuisance surface. Holding a live session is the first
+ * gate; these bound what a granted site can still do with it. The shape follows
+ * Chromium's permission embargo: a dismissal is not a denial, but repeated
+ * dismissals stop the asking.
+ */
+const UNLOCK_COOLDOWN_MS = 60_000;
+/** Consecutive dismissals before a namespace stops being able to prompt. */
+const UNLOCK_MAX_DISMISSALS = 3;
 
 class DataVaultManager {
   /**
@@ -121,6 +135,10 @@ class DataVaultManager {
     this._sessions = new Map();
     /** namespace -> the consent request currently in flight (dedupe double-connect). */
     this._pendingByNamespace = new Map();
+    /** namespace -> { dismissals, lastPromptAt } for vault_requestUnlock. */
+    this._unlockPrompts = new Map();
+    /** The unlock prompt in flight, shared by every caller. */
+    this._pendingUnlock = null;
 
     this._engine.setEmitter((sessionId, notification) => this._emit(sessionId, notification));
   }
@@ -183,7 +201,7 @@ class DataVaultManager {
       }
       // All data-plane methods carry a sessionId that MUST belong to this frame.
       const sessionId = params && params.sessionId;
-      this._requireOwnedSession(event, origin, sessionId);
+      const session = this._requireOwnedSession(event, origin, sessionId);
 
       // Every successful data-plane call is dapp activity. Hosts with an
       // auto-lock timer must hear about it, or using the vault is the one thing
@@ -211,6 +229,13 @@ class DataVaultManager {
         }
         case M.getPermissions:
           return ok(await this._engine.localGetPermissions(sessionId));
+        case M.requestUnlock:
+          // Deliberately NOT an engine method and NOT gated on the grant: it
+          // asks the user for the host's own unlock screen, it reads and writes
+          // nothing, and requiring it in the scope list would reproduce the
+          // vault_getPermissions trap — a site cannot request what it did not
+          // know to ask for. Holding this session is the authorisation.
+          return ok(await this._requestUnlockForSite(session.namespace));
         default:
           throw rpcError(4200, `method not supported: ${method}`);
       }
@@ -501,6 +526,57 @@ class DataVaultManager {
   async requestUnlock() {
     const unlocked = await this._keystore.unlock();
     return { unlocked: !!unlocked };
+  }
+
+  /**
+   * @private Site-facing unlock request (`vault_requestUnlock`).
+   *
+   * Raises the same unlock screen the home page raises, so a page whose
+   * `vault_getData` just failed with 4312 can offer "Unlock" inline instead of
+   * narrating where the host keeps its controls — prose that is a guess about
+   * someone else's UI and goes stale when that UI moves.
+   *
+   * Resolves `{ unlocked }` always; `reason` says why when it is false, so a
+   * site can tell "the user said no" from "stop asking".
+   */
+  async _requestUnlockForSite(namespace) {
+    if (this._keystore.isUnlocked()) {
+      // Seeing it unlocked — by our prompt, the toolbar, or anything else —
+      // ends every embargo: the next lock is a new situation, not a
+      // continuation of the one the user dismissed.
+      this._unlockPrompts.clear();
+      return { unlocked: true };
+    }
+
+    const state = this._unlockPrompts.get(namespace) || { dismissals: 0, lastPromptAt: 0 };
+    if (state.dismissals >= UNLOCK_MAX_DISMISSALS) {
+      return { unlocked: false, reason: 'embargoed' };
+    }
+    const since = this._now() - state.lastPromptAt;
+    if (state.lastPromptAt && since < UNLOCK_COOLDOWN_MS) {
+      return { unlocked: false, reason: 'cooldown' };
+    }
+
+    // One prompt at a time, whoever asks: the vault is global, and two sites
+    // racing must not stack two unlock screens on the user.
+    if (!this._pendingUnlock) {
+      this._pendingUnlock = this.requestUnlock().finally(() => {
+        this._pendingUnlock = null;
+      });
+    }
+    state.lastPromptAt = this._now();
+    this._unlockPrompts.set(namespace, state);
+
+    const { unlocked } = await this._pendingUnlock;
+    if (unlocked) {
+      // A successful unlock clears everyone's dismissal count: the user has
+      // shown they are willing, and the next lock is a fresh situation.
+      this._unlockPrompts.clear();
+      return { unlocked: true };
+    }
+    state.dismissals += 1;
+    this._unlockPrompts.set(namespace, state);
+    return { unlocked: false, reason: 'dismissed' };
   }
 
   /**
