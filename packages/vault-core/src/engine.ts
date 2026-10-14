@@ -15,6 +15,9 @@ import {
   SESSION_DEFAULT_TTL_MS,
   SESSION_ABSOLUTE_MAX_TTL_MS,
   MAX_PATHS_PER_REQUEST,
+  MAX_FOREIGN_ORIGINS,
+  MAX_FOREIGN_PATHS_PER_ORIGIN,
+  PUBLIC_POINTER,
   MAX_PATCH_OPS,
   MAX_NAMESPACE_BYTES,
   MAX_JSON_DEPTH,
@@ -44,6 +47,7 @@ import {
   type NamespaceGranularity,
   type IdentityVerification,
   type FieldRule,
+  type ForeignReadGrant,
   type Grant,
   type JsonRpcRequest,
   type JsonRpcResponse,
@@ -57,10 +61,19 @@ import { verifyTyped } from "@vault/crypto-core";
 import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, RevocationChecker, StorageAdapter } from "./adapters.js";
 import { systemClock } from "./adapters.js";
 import { DocumentStore, versionToEtag, etagToVersion } from "./document-store.js";
-import { fieldAllows, intersectScopes, normalizeFields, pathIsSensitive } from "./grants.js";
-import { pointerGet, pointerRemove, pointerSet, withinDepth, type Json } from "./json-pointer.js";
+import {
+  fieldAllows,
+  foreignReadAllows,
+  intersectScopes,
+  isUnderPublic,
+  normalizeFields,
+  pathIsSensitive,
+  pointerCovers,
+  publishAllows,
+} from "./grants.js";
+import { parsePointer, pointerGet, pointerRemove, pointerSet, withinDepth, type Json } from "./json-pointer.js";
 import { ReplayGuard } from "./replay.js";
-import { SessionStore, type Session } from "./session.js";
+import { SessionStore, type ForeignReadEntry, type Session } from "./session.js";
 import { verifyProposal } from "./identity-verify.js";
 
 export interface VaultEngineConfig {
@@ -108,6 +121,56 @@ export interface LocalChange {
 
 /** Emits a JSON-RPC notification (subscription update or permissions_changed) to a session. */
 export type NotificationEmitter = (sessionId: string, notification: JsonRpcNotification) => void;
+
+/**
+ * Clamp a declared cross-origin path list to the published subtree.
+ *
+ * Throws here, at connect, rather than returning empty: no owner partition has
+ * been addressed yet, so this is a pure judgment on the READER's own syntax and
+ * telling an honest developer their declaration was out of scope leaks nothing.
+ * Contrast `localGetPublic`, which must answer the same path with `null` — by
+ * then a throw would discriminate "unapproved owner" from "owner with nothing
+ * there". The asymmetry is deliberate; see the comment there.
+ */
+function normalizeForeignPaths(paths: string[]): string[] {
+  const kept: string[] = [];
+  for (const p of paths ?? []) {
+    // Same validation a write gets: length, depth, and the prototype tokens.
+    parsePointer(p);
+    if (!isUnderPublic(p)) {
+      throw VaultError.of("FieldOutOfScope", `cross-origin reads are limited to ${PUBLIC_POINTER}`);
+    }
+    // The whole subtree subsumes every leaf, so it collapses the list.
+    if (p === PUBLIC_POINTER) return [PUBLIC_POINTER];
+    kept.push(p);
+  }
+  return [...new Set(kept)];
+}
+
+/**
+ * Reduce the consent decision to entries that were actually requested.
+ *
+ * The UI may only SELECT (by owner namespace) and NARROW (by path). The
+ * namespace -> storageKey mapping always comes from the entry the engine
+ * resolved, so there is no path from a consent adapter to an arbitrary
+ * partition even if it invents one.
+ */
+function clampForeignToRequested(
+  granted: ForeignReadGrant[],
+  requested: ForeignReadEntry[],
+): ForeignReadEntry[] {
+  const byNamespace = new Map(requested.map((e) => [e.namespace, e]));
+  const out: ForeignReadEntry[] = [];
+  for (const g of granted) {
+    const want = byNamespace.get(g.namespace);
+    if (!want) continue;
+    const paths = normalizeForeignPaths(g.paths ?? []).filter((p) =>
+      want.paths.some((w) => pointerCovers(w, p)),
+    );
+    if (paths.length > 0) out.push({ ...want, paths });
+  }
+  return out;
+}
 
 export class VaultEngine {
   private readonly keystore: KeystoreAdapter;
@@ -236,6 +299,10 @@ export class VaultEngine {
       verified: verified.verification.ok,
       methods: grantedMethods,
       fields: grantedFields,
+      // The signed (remote) plane has no cross-origin reads: they are declared
+      // through `connectLocal`'s requestedScopes, and this empty literal is the
+      // documentation of that rather than an oversight.
+      foreignReads: [],
       writePolicy,
       createdAt: now,
       expiresAt,
@@ -249,6 +316,7 @@ export class VaultEngine {
       namespace: verified.verification.namespace,
       storageKey: derived.storageKey,
       grant,
+      foreignReads: new Map(),
       delegatedKeyPub: verified.delegatedKeyPub,
       proposerPublicKey: params.proposerPublicKey,
       responderPublicKey: ctx.responderPublicKey,
@@ -505,6 +573,16 @@ export class VaultEngine {
     const changedPaths: string[] = [];
     for (const change of changes) {
       const path = change.path;
+      // Publishing is explicit. Writing under the published subtree makes data
+      // readable by any site the user later approves, and under "location is the
+      // mark" that write IS the publication decision — so it needs a grant
+      // rooted at or below the subtree, not merely one that happens to cover it.
+      // A rule on the empty pointer covers everything, so without this a site
+      // granted the whole document could publish with the word "public" never
+      // appearing on the sheet the user approved.
+      if (isUnderPublic(path) && !publishAllows(session.grant.fields, path)) {
+        throw VaultError.of("WriteForbidden", `publishing to ${path} needs an explicit ${PUBLIC_POINTER} grant`);
+      }
       if (change.op === "remove") {
         if (!fieldAllows(session.grant.fields, path, "write")) {
           throw fieldAllows(session.grant.fields, path, "read")
@@ -663,6 +741,7 @@ export class VaultEngine {
     const requestedMethods = [...new Set(input.requestedScopes.flatMap((s) => s.methods))];
     const requestedFields = normalizeFields(input.requestedScopes.flatMap((s) => s.fields));
     if (requestedMethods.length === 0) throw VaultError.of("UnsupportedMethod", "no method requested");
+    const requestedForeign = this.resolveForeignRequests(input.requestedScopes, derived.namespace);
 
     const verification: IdentityVerification = {
       ok: true,
@@ -679,6 +758,9 @@ export class VaultEngine {
       appMetadata: input.appMetadata,
       requestedScopes: input.requestedScopes,
       pairingChallenge: "",
+      // Resolved, not the page's text: canonical owner origin, namespace the
+      // vault derived, paths already clamped to the published subtree.
+      foreignReads: requestedForeign.map(({ namespace, origin, paths }) => ({ namespace, origin, paths })),
     });
     if (!decision.approved) throw VaultError.of("UserRejected", decision.reason ?? "user declined");
 
@@ -689,6 +771,9 @@ export class VaultEngine {
     const grantedMethods = decision.grantedMethods ?? requestedMethods;
     const grantedFields = normalizeFields(decision.grantedFields ?? requestedFields);
     const writePolicy = decision.writePolicy ?? "ask-once-per-session";
+    // No `?? requestedForeign` fallback: cross-origin access fails closed, so a
+    // consent adapter that never sets this grants none of it.
+    const grantedForeign = clampForeignToRequested(decision.grantedForeignReads ?? [], requestedForeign);
     const expiresAt = now + this.sessionTtlMs;
     const grantId = this.randomId();
 
@@ -700,6 +785,7 @@ export class VaultEngine {
       verified: true,
       methods: grantedMethods,
       fields: grantedFields,
+      foreignReads: grantedForeign.map(({ namespace, origin, paths }) => ({ namespace, origin, paths })),
       writePolicy,
       createdAt: now,
       expiresAt,
@@ -712,6 +798,7 @@ export class VaultEngine {
       namespace: derived.namespace,
       storageKey: derived.storageKey,
       grant,
+      foreignReads: new Map(grantedForeign.map((e) => [e.namespace, e])),
       delegatedKeyPub: "",
       proposerPublicKey: "",
       responderPublicKey: "",
@@ -753,6 +840,120 @@ export class VaultEngine {
     if (!session.grant.methods.includes(method)) {
       throw VaultError.of("Unauthorized", `method not granted: ${method}`);
     }
+  }
+
+  /**
+   * Resolve a connect's declared cross-origin reads. THE single derivation site:
+   * neither the host, nor the consent UI, nor the page ever turns an origin into
+   * a namespace, so every rule `deriveOriginNamespace` enforces applies here too.
+   *
+   * Always derived at the default granularity, never `input.granularity`: the
+   * reader's choice governs where the READER's own partition lives and must not
+   * steer which partition its cross-origin reads point at.
+   */
+  private resolveForeignRequests(scopes: RequestedScope[], ownNamespace: string): ForeignReadEntry[] {
+    const rules = scopes.flatMap((s) => s.foreign ?? []);
+    if (rules.length === 0) return [];
+
+    const byNamespace = new Map<string, ForeignReadEntry>();
+    for (const rule of rules) {
+      let derived;
+      try {
+        derived = deriveOriginNamespace(rule.origin);
+      } catch {
+        // `deriveOriginNamespace` throws NamespaceError, not VaultError. This
+        // judges the reader's own request before any partition is addressed, so
+        // it is safe to be specific.
+        throw VaultError.of("InvalidRequest", "cross-origin read names an unresolvable site");
+      }
+      // Naming yourself is not a cross-origin read; your own grant already says
+      // what you may touch.
+      if (derived.namespace === ownNamespace) continue;
+
+      const paths = normalizeForeignPaths(rule.paths);
+      if (paths.length === 0) continue;
+      if (paths.length > MAX_FOREIGN_PATHS_PER_ORIGIN) {
+        throw VaultError.of("QuotaExceeded", "too many published paths for one site");
+      }
+
+      const existing = byNamespace.get(derived.namespace);
+      if (existing) {
+        existing.paths = normalizeForeignPaths([...existing.paths, ...paths]);
+      } else {
+        byNamespace.set(derived.namespace, {
+          namespace: derived.namespace,
+          origin: rule.origin,
+          storageKey: derived.storageKey,
+          paths,
+        });
+      }
+    }
+    if (byNamespace.size > MAX_FOREIGN_ORIGINS) {
+      throw VaultError.of("QuotaExceeded", "too many sites named");
+    }
+    return [...byNamespace.values()];
+  }
+
+  /**
+   * Trusted cross-origin read of another site's PUBLISHED subtree.
+   *
+   * Mechanically this is `adminReadPartition`'s unlock check plus an
+   * arbitrary-key `docStore.load`. It must never call that method: that is the
+   * owner plane, documented above as deliberately grant-bypassing. Everything
+   * that makes this safe is the code between here and the load — the method
+   * grant, the approved-owner lookup, and the published-subtree clamp.
+   *
+   * ABSENCE IS UNIFORM, by design. A site the user has never visited, an owner
+   * with no published subtree, an owner that has the pointer empty, an owner the
+   * user did not approve for this reader, and a pointer outside the published
+   * subtree all answer `null`. Any difference between them is an existence
+   * oracle over the user's browsing history — which is the thing this vault
+   * exists to prevent — so this returns rather than throws where `connect`
+   * throws for the same path.
+   *
+   * One owner per call, never a batch: a multi-owner call would make one request
+   * decrypt up to `MAX_FOREIGN_ORIGINS` other partitions.
+   */
+  async localGetPublic(
+    sessionId: string,
+    origin: string,
+    paths: string[],
+  ): Promise<{ values: Record<string, unknown> }> {
+    // The order of these gates is observable and tested: a reader without the
+    // method must be refused before anything it passes is even parsed.
+    const session = await this.requireLocalSession(sessionId);
+    this.assertLocalMethod(session, Method.GetPublicData);
+    if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many paths");
+
+    let namespace: string;
+    try {
+      namespace = deriveOriginNamespace(origin).namespace;
+    } catch {
+      throw VaultError.of("InvalidRequest", "unresolvable site");
+    }
+    // Map.get, never `fieldAllows`: see foreignReadAllows in grants.ts for why
+    // the reader's own field rules must not be consulted here.
+    const entry = session.foreignReads.get(namespace);
+
+    const values: Record<string, unknown> = {};
+    const readable: string[] = [];
+    for (const path of paths) {
+      parsePointer(path);
+      values[path] = null; // the default answer is nothing
+      if (entry && foreignReadAllows(entry, path)) readable.push(path);
+    }
+    // Nothing approved: answer without touching the owner's partition at all.
+    if (!entry || readable.length === 0) return { values };
+
+    const { doc } = await this.docStore.load(entry.storageKey);
+    for (const path of readable) {
+      const got = pointerGet(doc, path);
+      values[path] = got === undefined ? null : got;
+    }
+    // No `version`: an etag over another partition moves whenever the owner
+    // writes, so returning one would tell a reader the owner is active even
+    // when every value it can see is null.
+    return { values };
   }
 
   async localGet(sessionId: string, paths: string[]): Promise<GetDataResult> {

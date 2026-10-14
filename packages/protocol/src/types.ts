@@ -55,6 +55,46 @@ export interface FieldRule {
   sensitive?: boolean;
 }
 
+/**
+ * A read the app requests on ANOTHER origin's published subtree.
+ *
+ * The owner is named by ORIGIN — `scheme://host[:port]` — never by namespace and
+ * never by storage key. The vault runs this string through the same
+ * `deriveOriginNamespace` it uses for the caller's own partition, so every rule
+ * that enforces (no userinfo, query, fragment or path; http(s) plus the dweb
+ * allowlist; registrable-domain reduction; `*.localhost` port keying; per-scheme
+ * dweb case folding) applies identically here. A hand-built `web:example.com`, a
+ * URL with a path, a `file:` scheme and a bare storage key are all rejected
+ * before any partition is addressed.
+ *
+ * Deliberately NOT expressed as a `namespace?` on `FieldRule`: four call sites
+ * read that list as "rules over my own document", so a namespaced rule there
+ * would be silently honoured as a local one, and a rule with the namespace
+ * absent would have to mean "any owner" — a wildcard.
+ */
+export interface ForeignReadRule {
+  origin: string;
+  /**
+   * Pointers wanted, each `PUBLIC_POINTER` or a descendant. `["/public"]` asks
+   * for the whole published subtree, including whatever the owner adds later.
+   */
+  paths: string[];
+}
+
+/**
+ * A settled cross-origin read. `namespace` is vault-derived at connect; the
+ * storage key is recomputed from it and never travels with the grant, so neither
+ * the page, nor the consent UI, nor the host's at-rest permission file can name a
+ * partition directly.
+ */
+export interface ForeignReadGrant {
+  namespace: Namespace;
+  /** The origin as the vault canonicalised it. Display only. */
+  origin: string;
+  /** Clamped pointers, each `PUBLIC_POINTER` or below. */
+  paths: string[];
+}
+
 /** Write-confirmation policy for a grant. */
 export type WritePolicy = "ask-every" | "ask-once-per-session" | "auto";
 
@@ -64,6 +104,8 @@ export interface RequestedScope {
   methods: string[];
   /** Field rules the app requests. */
   fields: FieldRule[];
+  /** Cross-origin reads of other sites' published subtrees. */
+  foreign?: ForeignReadRule[];
   /** Optional scopes may be declined without failing the connection. */
   optional?: boolean;
 }
@@ -82,6 +124,16 @@ export interface Grant {
   verified: boolean;
   methods: string[];
   fields: FieldRule[];
+  /**
+   * Approved cross-origin published reads; empty when none.
+   *
+   * REQUIRED, not optional, on purpose: the bundle shipped to the browser is
+   * built by esbuild straight from source with no `tsc` step, so `pnpm
+   * typecheck` is the only thing that will ever check these types. A required
+   * field is the one mechanism that forces every `Grant` construction site to
+   * make a decision about cross-origin access rather than inherit a default.
+   */
+  foreignReads: ForeignReadGrant[];
   writePolicy: WritePolicy;
   createdAt: number; // epoch ms
   expiresAt: number; // epoch ms

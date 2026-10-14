@@ -21,6 +21,7 @@ export const Method = {
   SessionDelete: "vault_sessionDelete",
   SessionPing: "vault_sessionPing",
   GetData: "vault_getData",
+  GetPublicData: "vault_getPublicData",
   SetData: "vault_setData",
   PatchData: "vault_patchData",
   Subscribe: "vault_subscribe",

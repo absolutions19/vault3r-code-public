@@ -89,6 +89,14 @@ export interface ConsentDecision {
   grantedFields?: import("@vault/protocol").FieldRule[];
   /** Methods the user actually granted. */
   grantedMethods?: string[];
+  /**
+   * Cross-origin reads the user approved — a subset of the RESOLVED request.
+   *
+   * Omitted means NONE, deliberately unlike `grantedMethods`/`grantedFields`,
+   * whose `?? requested` fallback is open. Cross-origin access fails closed, so
+   * a consent adapter that has never heard of this field grants none of it.
+   */
+  grantedForeignReads?: import("@vault/protocol").ForeignReadGrant[];
   writePolicy?: import("@vault/protocol").WritePolicy;
   reason?: string;
 }
@@ -100,6 +108,14 @@ export interface ConsentRequest {
   /** The number-matching code the user must confirm (anti pairing-relay). */
   pairingChallenge: string;
   assertedAccount?: string;
+  /**
+   * Cross-origin published reads, RESOLVED by the vault: owner namespace plus
+   * paths already clamped to the published subtree. A consent UI must render
+   * these, never `requestedScopes[].foreign`, which is the page's unvalidated
+   * text — the origin there has not been canonicalised and its paths have not
+   * been clamped.
+   */
+  foreignReads?: import("@vault/protocol").ForeignReadGrant[];
 }
 
 export interface ConsentAdapter {

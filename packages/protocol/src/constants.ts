@@ -17,6 +17,17 @@ export const NS_PREFIX_UNVERIFIED = "unverified-tofu" as const;
 /** Reserved internal namespace for the vault's own metadata. */
 export const NS_META = "__vault_meta" as const;
 
+/**
+ * The reserved JSON Pointer subtree a site PUBLISHES for cross-origin reads.
+ *
+ * Location is the mark: there is no separate "shareable" flag, so whatever an
+ * owner writes here is what another site can be granted, and nothing outside it
+ * can ever be read across the origin boundary. A pointer, so the existing
+ * token-boundary prefix rule gives subtree coverage for free — and so
+ * `/publicity` is not `/public`.
+ */
+export const PUBLIC_POINTER = "/public" as const;
+
 /** Freshness / expiry windows (milliseconds). */
 export const REQUEST_MAX_SKEW_MS = 30_000; // clock skew tolerance for issuedAt
 export const REQUEST_DEFAULT_TTL_MS = 300_000; // 5 min: a request past this is rejected
@@ -33,6 +44,13 @@ export const MAX_PATHS_PER_REQUEST = 64;
 export const MAX_PATCH_OPS = 128;
 export const MAX_NAMESPACE_BYTES = 64 * 1024; // per-namespace stored document cap
 export const MAX_FIELD_PATH_LEN = 512;
+/**
+ * Caps on a connect's cross-origin read declaration. These bound the consent
+ * sheet's length — a user cannot meaningfully approve reads of fifty sites at
+ * once — and the number of cross-site edges the host persists per grant.
+ */
+export const MAX_FOREIGN_ORIGINS = 8;
+export const MAX_FOREIGN_PATHS_PER_ORIGIN = 16;
 
 /** Cryptographic suite identifiers pinned into signed material and at-rest AAD. */
 export const SIG_ALG = "Ed25519" as const;

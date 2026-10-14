@@ -8,11 +8,29 @@ export interface Subscription {
   paths: string[];
 }
 
+/**
+ * An approved cross-origin read, resolved once at connect. The storage key is
+ * derived by the engine from `namespace`; it is never caller- or UI-supplied.
+ */
+export interface ForeignReadEntry {
+  namespace: Namespace;
+  origin: string;
+  storageKey: string;
+  paths: string[];
+}
+
 export interface Session {
   id: string;
   namespace: Namespace;
   storageKey: string;
   grant: Grant;
+  /**
+   * Owner namespace -> approved cross-origin read. A Map, so absence is the
+   * default and no wildcard is representable: there is no key meaning "any
+   * owner", and `storageKey` stays a scalar — a session reads and writes exactly
+   * one partition and may additionally READ the published subtree of these.
+   */
+  foreignReads: Map<string, ForeignReadEntry>;
   /** The delegated session public key (d_sess) that signs data-plane requests. */
   delegatedKeyPub: Base64Url;
   proposerPublicKey: Base64Url;

@@ -5,6 +5,7 @@
  */
 
 import type { FieldRule, RequestedScope } from "@vault/protocol";
+import { PUBLIC_POINTER } from "@vault/protocol";
 import { parsePointer } from "./json-pointer.js";
 
 /** True if `rulePath` (a prefix) covers `path`, on pointer-token boundaries. */
@@ -28,6 +29,57 @@ export function fieldAllows(fields: FieldRule[], path: string, mode: AccessMode)
 /** Is `path` covered by a rule marked sensitive (forces per-op biometric)? */
 export function pathIsSensitive(fields: FieldRule[], path: string): boolean {
   return fields.some((r) => pointerCovers(r.path, path) && r.sensitive === true);
+}
+
+/** Is `path` the published subtree or inside it? `/publicity` is not. */
+export function isUnderPublic(path: string): boolean {
+  return pointerCovers(PUBLIC_POINTER, path);
+}
+
+/**
+ * Does ONE approved cross-origin read cover `path`?
+ *
+ * Deliberately not `fieldAllows`, and deliberately not even the same SHAPE. A
+ * `FieldRule[]` says what a reader may touch in ITS OWN document, where a rule
+ * on the empty pointer — covering everything — is a normal ask. Authorising a
+ * cross-origin read with `fieldAllows(session.grant.fields, …)` would hand every
+ * site holding such a rule a read on every other site's published subtree. This
+ * takes a single entry already keyed by owner namespace, so a `FieldRule[]`
+ * cannot be passed here and `entry.paths` cannot be passed to `fieldAllows`.
+ * That incompatibility is the only part of the guarantee that survives into the
+ * browser, which runs the bundle with no typecheck.
+ *
+ * `PUBLIC_POINTER` is re-asserted here even though connect already clamped what
+ * was stored: the host keeps grants in a file encrypted with the OS keychain but
+ * NOT sealed under the vault key, so its contents are modifiable by anything
+ * running as the user and must be re-clamped at the point of use. Without the
+ * `isUnderPublic(p)` arm one hand-edited `""` entry reopens the whole document.
+ */
+export function foreignReadAllows(entry: { paths: string[] }, path: string): boolean {
+  if (!isUnderPublic(path)) return false;
+  // Fail closed on a malformed entry rather than throwing. The entry is read
+  // back from the host's grant file, which is not sealed under the vault key, and
+  // in the browser this code runs from a bundle with no typecheck — so "not the
+  // shape I expected" has to mean "nothing approved". A throw here would also be
+  // observably different from an empty answer, which is the oracle the uniform
+  // empty result exists to avoid.
+  if (!Array.isArray(entry?.paths)) return false;
+  return entry.paths.some((p) => typeof p === "string" && isUnderPublic(p) && pointerCovers(p, path));
+}
+
+/**
+ * May this grant WRITE to `path` under the published subtree?
+ *
+ * Publishing is explicit. A rule on the empty pointer covers `/public` the same
+ * way it covers everything else, so without this a site granted the whole
+ * document could publish without the word "public" ever appearing on the sheet
+ * the user approved — and under "location is the mark" that is the entire
+ * consent for making data readable by others. So publishing needs a rule rooted
+ * at or below `/public`: a whole-document grant carries every other right but
+ * not this one.
+ */
+export function publishAllows(fields: FieldRule[], path: string): boolean {
+  return fields.some((r) => r.write && isUnderPublic(r.path) && pointerCovers(r.path, path));
 }
 
 /**
