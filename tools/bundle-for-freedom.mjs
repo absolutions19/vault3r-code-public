@@ -11,6 +11,7 @@
  */
 
 import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +19,39 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FREEDOM = path.resolve(process.argv[2] || path.join(ROOT, '..', 'freedom-browser'));
 const OUT = path.join(FREEDOM, 'src', 'main', 'vault', 'vendor');
+
+/**
+ * The revision this bundle was built from, stamped into the banner.
+ *
+ * Nothing else in the generated file says which engine it is: without this a
+ * reader of `freedom-browser` has 433 KB of code, no version, and no way back
+ * to the source — which an MPL-2.0 bundle has to be traceable to. `+local`
+ * marks a bundle built over uncommitted work, so an untraceable one says so.
+ */
+function sourceRevision() {
+  try {
+    const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
+    const sha = git('rev-parse', '--short=12', 'HEAD');
+    const dirty = git('status', '--porcelain') !== '';
+    return `${sha}${dirty ? '+local' : ''}`;
+  } catch {
+    return 'unknown';
+  }
+}
+
+const REPO = 'https://github.com/absolutions19/vault3r-code-public';
+const BANNER = [
+  '/* GENERATED — do not edit by hand.',
+  ' * @vault/{vault-core,crypto-core,protocol} bundled for Freedom Browser.',
+  ` * Source:   ${REPO}`,
+  ` * Revision: ${sourceRevision()}`,
+  ' * License:  MPL-2.0 (same as Freedom Browser)',
+  ' * Inlines:  @noble/ciphers, @noble/curves, @noble/hashes, @scure/base,',
+  ' *           @scure/bip39, tldts — all MIT. See the vendor README beside',
+  ' *           this file, and NOTICES in the Freedom repo.',
+  ' * Rebuild:  node tools/bundle-for-freedom.mjs <path-to-freedom-browser>',
+  ' */',
+].join('\n');
 
 if (!fs.existsSync(path.join(FREEDOM, 'package.json'))) {
   console.error(`freedom-browser not found at ${FREEDOM}`);
@@ -48,9 +82,7 @@ await build({
   // Keep Node builtins external; everything else (noble, tldts, …) goes in.
   packages: 'bundle',
   logLevel: 'info',
-  banner: {
-    js: '/* GENERATED — @vault/{vault-core,crypto-core,protocol} bundled from the vault3r repo. Do not edit by hand. */',
-  },
+  banner: { js: BANNER },
 });
 
 fs.unlinkSync(entry);

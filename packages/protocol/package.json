@@ -1,6 +1,7 @@
 {
   "name": "@vault/protocol",
   "version": "0.4.0",
+  "license": "MPL-2.0",
   "private": true,
   "type": "module",
   "description": "VAULT wire protocol: JSON-RPC method catalog, message envelopes, error registry, canonical encoder. Single source of wire truth.",
