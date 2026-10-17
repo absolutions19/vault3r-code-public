@@ -566,7 +566,15 @@ export class VaultEngine {
     const loaded = await this.docStore.load(session.storageKey);
     const baseV = etagToVersion(baseVersion);
     if (baseV !== undefined && baseV !== loaded.version) {
-      throw VaultError.of("VersionConflict", `stale baseVersion (have ${loaded.version})`);
+      // The current etag rides along in `data`, so a caller's retry is
+      // read-nothing: it already knows the version its next write must name.
+      // Leaking it costs nothing — a writer holds a grant on this namespace,
+      // and the number it is being told is the one its own write just raced.
+      throw VaultError.of(
+        "VersionConflict",
+        `stale baseVersion (have ${loaded.version})`,
+        { version: versionToEtag(loaded.version) },
+      );
     }
 
     let doc = loaded.doc;

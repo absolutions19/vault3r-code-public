@@ -577,6 +577,21 @@ describe("VaultEngine — input hardening caps", () => {
     expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
   });
 
+  it("a version conflict names the version a retry should write against", async () => {
+    const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
+    await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", "1"));
+    const stale = await engine.handleRequest(
+      sessionId,
+      alice.setData(sessionId, "/profile/a", "2", "etag:0"),
+    );
+
+    const err = failure(stale).error;
+    expect(err.code).toBe(ErrorCode.VersionConflict);
+    // Without this a caller's retry has to re-read the document just to learn
+    // the number its next write must name.
+    expect((err as { data?: { version?: string } }).data).toEqual({ version: "etag:1" });
+  });
+
   it("a rejected over-limit write leaves the prior stored state unchanged", async () => {
     const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
     await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", "keep-me"));

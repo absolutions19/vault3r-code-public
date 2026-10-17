@@ -31,9 +31,23 @@ export function normalizeHost(input: string): string {
     throw new NamespaceError(`invalid host: ${input}`);
   }
   const info = tldParse(hostname);
-  if (info.isIp) throw new NamespaceError("IP literals are not valid identities");
-  if (!hostname.includes(".")) throw new NamespaceError("host must be a fully-qualified domain");
-  if (hostname === "localhost") throw new NamespaceError("localhost is not a valid identity");
+  // These three are the first thing a developer serving on 127.0.0.1 or bare
+  // localhost hits, so each says what to do instead of only what is wrong.
+  if (info.isIp) {
+    throw new NamespaceError(
+      "IP literals are not valid identities — serve on a name instead, e.g. http://app.localhost:9999",
+    );
+  }
+  if (!hostname.includes(".")) {
+    throw new NamespaceError(
+      `host must be a fully-qualified domain — use a name like app.${hostname} (any *.localhost name resolves to loopback)`,
+    );
+  }
+  if (hostname === "localhost") {
+    throw new NamespaceError(
+      "localhost is not a valid identity — use a subdomain of it, e.g. http://app.localhost:9999",
+    );
+  }
   return hostname;
 }
 
