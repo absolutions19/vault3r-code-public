@@ -25,6 +25,7 @@ import {
   type VaultIdentityRecord,
   type JsonRpcResponse,
   type JsonRpcFailure,
+  MAX_NAMESPACE_BYTES,
 } from "@vault/protocol";
 import { VaultEngine } from "./engine.js";
 import { InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent, StaticRevocationChecker } from "./in-memory.js";
@@ -512,7 +513,9 @@ describe("VaultEngine — input hardening caps", () => {
 
   it("rejects a write that would exceed the per-namespace document cap", async () => {
     const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
-    const big = "x".repeat(70 * 1024); // MAX_NAMESPACE_BYTES is 64 KiB
+    // One byte of JSON over the cap: `"x"` repeated is one UTF-8 byte each,
+    // plus the quotes and the `{"profile":{"blob":…}}` scaffolding around it.
+    const big = "x".repeat(MAX_NAMESPACE_BYTES);
     const r = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/blob", big));
     expect(failure(r).error.code).toBe(ErrorCode.QuotaExceeded);
   });
@@ -577,7 +580,10 @@ describe("VaultEngine — input hardening caps", () => {
   it("a rejected over-limit write leaves the prior stored state unchanged", async () => {
     const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
     await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/a", "keep-me"));
-    const rejected = await engine.handleRequest(sessionId, alice.setData(sessionId, "/profile/blob", "x".repeat(70 * 1024)));
+    const rejected = await engine.handleRequest(
+      sessionId,
+      alice.setData(sessionId, "/profile/blob", "x".repeat(MAX_NAMESPACE_BYTES)),
+    );
     expect(failure(rejected).error.code).toBe(ErrorCode.QuotaExceeded);
     const read = await engine.handleRequest(sessionId, alice.getData(sessionId, ["/profile/a"]));
     expect((read as { result: { values: Record<string, unknown> } }).result.values["/profile/a"]).toBe("keep-me");

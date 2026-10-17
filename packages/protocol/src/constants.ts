@@ -42,7 +42,17 @@ export const MAX_PLAINTEXT_BYTES = 128 * 1024; // decrypted JSON-RPC message cap
 export const MAX_JSON_DEPTH = 32;
 export const MAX_PATHS_PER_REQUEST = 64;
 export const MAX_PATCH_OPS = 128;
-export const MAX_NAMESPACE_BYTES = 64 * 1024; // per-namespace stored document cap
+/**
+ * Per-namespace stored document cap, on the UTF-8 serialization.
+ *
+ * Every write is a whole-document read-modify-write — load, decrypt, parse,
+ * mutate, serialize, encrypt, save — so this number is also the worst-case
+ * cost of a single `setData`, and the worst case a host has to hold in memory
+ * per writing site. 16 MiB is room for a real application's own data
+ * (documents, a cache, a small media blob as base64) while keeping that cycle
+ * well inside a frame's worth of work on a cold partition.
+ */
+export const MAX_NAMESPACE_BYTES = 16 * 1024 * 1024;
 export const MAX_FIELD_PATH_LEN = 512;
 /**
  * Caps on a connect's cross-origin read declaration. These bound the consent
