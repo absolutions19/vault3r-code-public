@@ -213,8 +213,10 @@ window.vault.on('change', (update) => {
   console.log('vault changed', update);
 });
 
-window.vault.on('permissionsRevoked', () => {
-  // User revoked in the Data tab — tear down UI / drop sessionId
+window.vault.on('permissionsChanged', () => {
+  // The user moved your grant in the Data tab — revoked, narrowed, or a
+  // cross-origin read switched back on. Your session is gone either way, so
+  // reconnect and read `session.grant`; do not assume you lost access.
 });
 
 await window.vault.unsubscribe(sessionId, subscriptionId);
@@ -428,7 +430,9 @@ await window.vault.request({
   "allowlisted". Site icons arrive in-band at `connect()` and are pinned, so
   rendering the grid makes no network requests and can't beacon your vault list.
 
-See [docs/SECURITY.md](docs/SECURITY.md) for the threat model and how each
+See [docs/FREEDOM-VAULT-PR-OVERVIEW.md](docs/FREEDOM-VAULT-PR-OVERVIEW.md) for
+what the browser integration adds to Freedom and how it is split for review,
+[docs/SECURITY.md](docs/SECURITY.md) for the threat model and how each
 red-team-critical fix maps to code, and [docs/PROTOCOL.md](docs/PROTOCOL.md) for
 the wire reference.
 

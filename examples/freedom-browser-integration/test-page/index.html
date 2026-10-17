@@ -128,7 +128,7 @@
         const res = await window.vault.subscribe(sessionId, ['/profile']);
         log('← subscribe', res);
         window.vault.on('change', (u) => log('⚡ change', u));
-        window.vault.on('permissionsRevoked', (u) => log('⚡ revoked', u));
+        window.vault.on('permissionsChanged', (u) => log('⚡ grant changed', u));
       } catch (e) {
         log('✗ subscribe failed:', e.message || e);
       }

@@ -18,7 +18,7 @@ module.exports = `
   if (window.vault) return;
   const pending = new Map();
   let requestId = 0;
-  const listeners = { change: [], permissionsRevoked: [] };
+  const listeners = { change: [], permissionsChanged: [] };
 
   function emit(event, data) {
     (listeners[event] || []).forEach(function (h) { try { h(data); } catch (e) {} });
@@ -83,9 +83,10 @@ module.exports = `
       }
     } else if (d.type === 'FREEDOM_VAULT_EVENT') {
       // Subscription updates arrive as { method: 'vault_subscription', params }.
-      // Permission revocations arrive as { method: 'vault_permissionsRevoked', params }.
+      // A grant that moved arrives as { method: 'vault_permissionsChanged', params }:
+      // revoked, narrowed, or switched back on. The session is gone either way.
       const n = d.notification || {};
-      if (n.method === 'vault_permissionsRevoked') emit('permissionsRevoked', n.params);
+      if (n.method === 'vault_permissionsChanged') emit('permissionsChanged', n.params);
       else emit('change', n.params);
     }
   });

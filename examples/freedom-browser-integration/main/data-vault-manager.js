@@ -354,7 +354,7 @@ class DataVaultManager {
         if (wc && !wc.isDestroyed()) {
           wc.send(CH.VAULT_PROVIDER_EVENT, {
             sessionId,
-            notification: { method: 'vault_permissionsRevoked', params: { namespace } },
+            notification: { method: 'vault_permissionsChanged', params: { namespace } },
           });
         }
       }
