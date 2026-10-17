@@ -108,7 +108,8 @@ Then:
 
 1. Unlock the wallet (one unlock covers the data vault).
 2. Confirm the badge says `window.vault ready`.
-3. **Connect** → sidebar **Data** tab shows per-field Allow/Deny.
+3. **Connect** → sidebar **Data** tab shows the consent sheet: the partition
+   being created, and Allow / Reject.
 4. **Write** / **Read** / **Subscribe**.
 5. Toolbar **Your dApps** (`freedom://dapps`) — tile for the test site.
 6. Wallet sidebar → **Data** — list / view / delete / export that partition.
@@ -219,6 +220,139 @@ window.vault.on('permissionsRevoked', () => {
 await window.vault.unsubscribe(sessionId, subscriptionId);
 ```
 
+### Sharing data under `/public`
+
+A partition is private to its origin, with one deliberate exception: the
+reserved pointer `/public`. **Location is the mark** — there is no `shareable`
+flag. Whatever a site stores under `/public` is the part it is willing to have
+other sites ask for; everything else can never leave the partition.
+
+**Publishing.** Writing under `/public` needs a granted rule rooted at or below
+it. A grant on the whole document (the empty pointer) carries every other right
+but *not* this one, so a site cannot end up publishing because it asked for
+everything:
+
+```js
+const session = await window.vault.connect({
+  requestedScopes: [{
+    methods: ['vault_getData', 'vault_setData'],
+    fields: [
+      { path: '/private/notes', read: true, write: true },
+      { path: '/public', read: true, write: true },   // ← the publish grant
+    ],
+  }],
+  appMetadata: { name: 'Notes' },
+});
+
+await window.vault.set(session.sessionId, { '/public/displayName': 'ada' });
+await window.vault.set(session.sessionId, { '/private/notes': 'not for sharing' });
+```
+
+Asking for that write raises a note on the consent sheet in so many words —
+"This site writes data marked `/public` into its partition. Other sites can read
+this data if you give them permission." — so the user is told at the moment they
+grant it.
+
+**Reading someone else's.** Declare the owners at `connect`, so one sheet covers
+your own fields and your cross-origin reads, then call `readPublic`:
+
+```js
+const session = await window.vault.connect({
+  requestedScopes: [{
+    methods: ['vault_getData', 'vault_setData', 'vault_getPublicData'],
+    fields: [{ path: '/own/seen', read: true, write: true }],
+    foreign: [{ origin: 'https://notes.example', paths: ['/public/displayName'] }],
+  }],
+});
+
+const { values } = await window.vault.readPublic(
+  session.sessionId,
+  'https://notes.example',
+  ['/public/displayName'],
+);
+```
+
+- **Read-only.** There is no cross-origin write and no cross-origin
+  `subscribe` — poll if you need to see changes.
+- **Per pair, user-approved.** The user ticks each owner on your sheet, and can
+  switch any granted read off later from either site's page in the **Data** pane
+  (it stays on record, so they can switch it back on).
+- **Origins compare including scheme**, and `*.localhost` including port:
+  `https://notes.example` and `bzz://notes.example` are two different owners
+  holding two different partitions.
+- **Absent reads as empty.** A path the owner never wrote, an owner with no
+  partition at all, an owner the user declined, a read switched off, and a
+  pointer outside `/public` all resolve to `null` with no error. That is
+  deliberate — anything that told them apart would let you probe which sites the
+  user has visited — and it means you cannot distinguish "nothing there" from
+  "not allowed". Write your code so it does not need to.
+- `vault_getPublicData` must be requested. Unlike `vault_getPermissions` it is
+  never granted implicitly, because it is the cross-origin surface.
+
+#### Forward compatibility: letting your next version read this one
+
+A partition is keyed by origin, so **the next iteration of your dApp is a
+different site**. `app.example` cannot read `v2.app.example`, and a move to a new
+domain or scheme (`https://` → `bzz://`) starts from an empty document. That is
+the isolation working, and it is also a migration problem — one `/public` solves,
+if you plan for it on the way in rather than on the way out.
+
+Write anything a future version will need under `/public` from the start:
+
+```js
+// v1, at https://app.example — treat /public as your own export format.
+await window.vault.set(session.sessionId, {
+  '/public/schema': 1,
+  '/public/profile': { handle: 'ada', theme: 'dark' },
+});
+```
+
+Then the next version declares a read of the old origin, and migrates on first
+run:
+
+```js
+// v2, at https://v2.app.example
+const session = await window.vault.connect({
+  requestedScopes: [{
+    methods: ['vault_getData', 'vault_setData', 'vault_getPublicData'],
+    fields: [{ path: '', read: true, write: true }],
+    foreign: [{ origin: 'https://app.example', paths: ['/public'] }],
+  }],
+});
+
+const mine = await window.vault.get(session.sessionId, ['/public/schema']);
+if (mine.values['/public/schema'] == null) {
+  const { values } = await window.vault.readPublic(
+    session.sessionId,
+    'https://app.example',
+    ['/public/schema', '/public/profile'],
+  );
+  if (values['/public/profile'] != null) {
+    await window.vault.set(session.sessionId, {
+      '/public/schema': values['/public/schema'],
+      '/public/profile': values['/public/profile'],
+    });
+  }
+  // Nothing there? Then there is nothing to migrate — see "absent reads as
+  // empty" above. Do not retry, and do not tell the user it failed.
+}
+```
+
+Naming `/public` wholesale (rather than each pointer) means the grant covers
+whatever v1 publishes later, so a v1 update does not strand v2.
+
+What this is not:
+
+- **Not automatic.** The user approves the read, on v2's consent sheet, naming
+  v1's partition. If they decline, v2 starts empty.
+- **Not private.** `/public` is readable by *any* site the user approves for it,
+  not only by your own next version. Put your migration payload there; do not
+  put secrets there and rely on nobody asking.
+- **Not a copy you can revoke.** Once v2 has read a value it holds it. Switching
+  the read off stops future reads, not past ones.
+- **Not a channel.** It is read-only and one-directional: v1 cannot see that v2
+  read it, and v2 cannot write back into v1's partition.
+
 ### Permissions, disconnect, and the EIP-1193-shaped `request`
 
 ```js
@@ -239,12 +373,15 @@ await window.vault.request({
 | `set(sessionId, values, baseVersion?)` | `vault_setData` | Write map of paths |
 | `patch(sessionId, ops, baseVersion?)` | `vault_patchData` | Patch ops |
 | `subscribe` / `unsubscribe` | `vault_subscribe` / `vault_unsubscribe` | Live updates |
+| `readPublic(sessionId, origin, paths)` | `vault_getPublicData` | Read another site's `/public` |
 | `getPermissions(sessionId)` | `vault_getPermissions` | Current grant |
 | `disconnect(sessionId)` | `vault_revoke` | End session |
 
 ### What a dApp cannot do
 
-- Name another site's namespace, or read another origin's data.
+- Name another site's namespace, or read another origin's data — except the
+  `/public` subtree of an owner the user approved for it, named by ORIGIN and
+  resolved to a namespace by the engine. See *Sharing data under `/public`*.
 - Supply its own origin — the browser takes it from the tab URL.
 - Reach the owner plane (`window.vaultData` / `freedom://dapps` site list).
 - Depend on a network `.well-known` fetch for the tile icon — icons are in-band
@@ -338,9 +475,13 @@ signed request against it fails.
 
 ## Limitations (honest)
 
-- The glue is **reference code that targets the fork's tree** — it is versioned and
-  reviewed here, then copied into `src/`. It is not yet vendored as a dependency of
-  the browser build.
+- The engine reaches the browser as a **generated bundle**, not as an npm
+  dependency: `tools/bundle-for-freedom.mjs` writes
+  `src/main/vault/vendor/vault-bundle.js` in the fork, stamped with the revision
+  it was built from. The host glue around it is versioned and reviewed here, then
+  copied into `src/main/vault/`. Publishing `@vault/*` to a registry would let
+  the browser depend on it the ordinary way, and would let its own license
+  tooling see it without a hand-written record.
 - The DEK is derived from the identity mnemonic ("one unlock"), which couples data
   re-keying to a seed change; a separate data-vault secret would decouple them at
   the cost of a second unlock. The open decisions are listed at the end of the
