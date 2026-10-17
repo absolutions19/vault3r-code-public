@@ -24,9 +24,9 @@ export const NS_META = "__vault_meta" as const;
  * owner writes here is what another site can be granted, and nothing outside it
  * can ever be read across the origin boundary. A pointer, so the existing
  * token-boundary prefix rule gives subtree coverage for free — and so
- * `/publicity` is not `/public`.
+ * `/sharedly` is not `/shared`.
  */
-export const PUBLIC_POINTER = "/public" as const;
+export const SHARED_POINTER = "/shared" as const;
 
 /** Freshness / expiry windows (milliseconds). */
 export const REQUEST_MAX_SKEW_MS = 30_000; // clock skew tolerance for issuedAt

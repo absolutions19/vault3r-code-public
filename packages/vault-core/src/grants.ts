@@ -5,7 +5,7 @@
  */
 
 import type { FieldRule, RequestedScope } from "@vault/protocol";
-import { PUBLIC_POINTER } from "@vault/protocol";
+import { SHARED_POINTER } from "@vault/protocol";
 import { parsePointer } from "./json-pointer.js";
 
 /** True if `rulePath` (a prefix) covers `path`, on pointer-token boundaries. */
@@ -31,9 +31,9 @@ export function pathIsSensitive(fields: FieldRule[], path: string): boolean {
   return fields.some((r) => pointerCovers(r.path, path) && r.sensitive === true);
 }
 
-/** Is `path` the published subtree or inside it? `/publicity` is not. */
-export function isUnderPublic(path: string): boolean {
-  return pointerCovers(PUBLIC_POINTER, path);
+/** Is `path` the shared subtree or inside it? `/sharedly` is not. */
+export function isUnderShared(path: string): boolean {
+  return pointerCovers(SHARED_POINTER, path);
 }
 
 /**
@@ -49,14 +49,14 @@ export function isUnderPublic(path: string): boolean {
  * That incompatibility is the only part of the guarantee that survives into the
  * browser, which runs the bundle with no typecheck.
  *
- * `PUBLIC_POINTER` is re-asserted here even though connect already clamped what
+ * `SHARED_POINTER` is re-asserted here even though connect already clamped what
  * was stored: the host keeps grants in a file encrypted with the OS keychain but
  * NOT sealed under the vault key, so its contents are modifiable by anything
  * running as the user and must be re-clamped at the point of use. Without the
- * `isUnderPublic(p)` arm one hand-edited `""` entry reopens the whole document.
+ * `isUnderShared(p)` arm one hand-edited `""` entry reopens the whole document.
  */
 export function foreignReadAllows(entry: { paths: string[] }, path: string): boolean {
-  if (!isUnderPublic(path)) return false;
+  if (!isUnderShared(path)) return false;
   // Fail closed on a malformed entry rather than throwing. The entry is read
   // back from the host's grant file, which is not sealed under the vault key, and
   // in the browser this code runs from a bundle with no typecheck — so "not the
@@ -64,22 +64,22 @@ export function foreignReadAllows(entry: { paths: string[] }, path: string): boo
   // observably different from an empty answer, which is the oracle the uniform
   // empty result exists to avoid.
   if (!Array.isArray(entry?.paths)) return false;
-  return entry.paths.some((p) => typeof p === "string" && isUnderPublic(p) && pointerCovers(p, path));
+  return entry.paths.some((p) => typeof p === "string" && isUnderShared(p) && pointerCovers(p, path));
 }
 
 /**
  * May this grant WRITE to `path` under the published subtree?
  *
- * Publishing is explicit. A rule on the empty pointer covers `/public` the same
+ * Publishing is explicit. A rule on the empty pointer covers `/shared` the same
  * way it covers everything else, so without this a site granted the whole
  * document could publish without the word "public" ever appearing on the sheet
  * the user approved — and under "location is the mark" that is the entire
  * consent for making data readable by others. So publishing needs a rule rooted
- * at or below `/public`: a whole-document grant carries every other right but
+ * at or below `/shared`: a whole-document grant carries every other right but
  * not this one.
  */
 export function publishAllows(fields: FieldRule[], path: string): boolean {
-  return fields.some((r) => r.write && isUnderPublic(r.path) && pointerCovers(r.path, path));
+  return fields.some((r) => r.write && isUnderShared(r.path) && pointerCovers(r.path, path));
 }
 
 /**

@@ -24,7 +24,7 @@ const clock = { now: () => FIXED_NOW };
 
 const ALL_METHODS = [
   Method.GetData,
-  Method.GetPublicData,
+  Method.GetSharedData,
   Method.SetData,
   Method.PatchData,
   Method.Subscribe,
@@ -115,12 +115,12 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     const rb = await engine.localGet(b.sessionId, ["/profile/name"]);
     expect(rb.values["/profile/name"]).toBe(null);
 
-    // Nor through the cross-origin read path. `b` holds GetPublicData (it is in
+    // Nor through the cross-origin read path. `b` holds GetSharedData (it is in
     // ALL_METHODS) and still gets nothing: `/profile` is not under the published
     // subtree, and `b` declared no foreign read in the first place. Cross-origin
     // reads narrow this isolation to exactly one subtree, and only by consent —
     // they do not widen it. See engine-public-read.test.ts.
-    const pb = await engine.localGetPublic(b.sessionId, "https://a.example", ["/profile/name"]);
+    const pb = await engine.localGetShared(b.sessionId, "https://a.example", ["/profile/name"]);
     expect(pb.values["/profile/name"]).toBe(null);
   });
 

@@ -18,7 +18,7 @@ reachable from the page as `window.vault`. The site declares which JSON Pointer
 paths it wants and whether it needs to write; the user approves the partition
 once; the data is sealed under a key derived from the wallet the browser already
 has. A site may also publish part of its document under the reserved pointer
-`/public` and another site may be granted **read-only** access to that subtree —
+`/shared` and another site may be granted **read-only** access to that subtree —
 approved by the user, per reader→owner pair. The wallet sidebar gains a **Data**
 pane that manages all of it, and `freedom://dapps` lists the sites holding data.
 
@@ -76,20 +76,20 @@ From that:
   same derivation before it will touch anything — it cannot pass a namespace or
   a storage key.
 - **Absent data reads as empty.** A path the owner never wrote, an owner with no
-  partition, an owner the user declined and a pointer outside `/public` are
+  partition, an owner the user declined and a pointer outside `/shared` are
   indistinguishable: every one answers `null`, with no error code. Anything else
   would be an existence oracle over the user's browsing history.
 
-## 4. Why `/public` and not a flag
+## 4. Why `/shared` and not a flag
 
 The writer marks data as publishable **by where it stores it**. There is no
 `shareable: true` field. Location cannot be mis-set, needs no new metadata, and
 makes the reader's consent sheet honest without the owner having to be present.
 
-One consequence had to be built deliberately: a write under `/public` requires a
-granted rule rooted at or below `/public`. Without that gate, a site granted the
+One consequence had to be built deliberately: a write under `/shared` requires a
+granted rule rooted at or below `/shared`. Without that gate, a site granted the
 whole document (the empty pointer covers everything) could publish without
-`/public` ever appearing on its consent sheet, and "location is the mark" would
+`/shared` ever appearing on its consent sheet, and "location is the mark" would
 not be true.
 
 ## 5. What was added, file by file
@@ -149,7 +149,7 @@ in behaviour to upstream.
 One site-facing channel, and it already existed as a tier:
 
 - `vault:provider-request` — **PUBLIC** tier. Every page method (`connect`,
-  `get`, `set`, `patch`, `subscribe`, `getPublicData`, `getPermissions`,
+  `get`, `set`, `patch`, `subscribe`, `getSharedData`, `getPermissions`,
   `requestUnlock`) is a method *on this one channel*, so cross-partition reads
   added no new site-facing surface and no policy change.
 - `internal:get-vault-inject-source` — PUBLIC, the document-start bootstrap, the
@@ -184,7 +184,7 @@ The permission file is safeStorage-encrypted and deliberately **not** sealed
 under the vault DEK — the browser has to read it to know what to prompt for
 before anything is unlocked. It is therefore a browsing-history artefact, which
 its own header says, and the engine re-clamps anything read back out of it
-(a hand-edited `"/"` entry cannot widen a `/public` grant).
+(a hand-edited `"/"` entry cannot widen a `/shared` grant).
 
 Cross-partition reads added one field: `foreignReads[]` on the reader's record,
 each `{namespace, origin, paths, enabled?}`. `enabled` absent means on.
@@ -198,8 +198,8 @@ site wants to read, each a namespace in code with one `read` checkbox. Allow /
 Reject. The sheet approves **per partition, not per field**: a field path is the
 site's own schema and means little to the person approving it.
 
-A site asking to write at or below `/public` also gets a blue note under its
-row — "This site writes data marked `/public` into its partition. Other sites
+A site asking to write at or below `/shared` also gets a blue note under its
+row — "This site writes data marked `/shared` into its partition. Other sites
 can read this data if you give them permission." It is the only place the user
 is told that location is the mark, and it appears on exactly the condition the
 engine's publish gate enforces, so a whole-document grant does not raise it.
@@ -256,7 +256,7 @@ decide one is needed).
   owner deletion refusing the reader's session and making it ask again while
   leaving its own grant intact, and the publish gate.
 - **Host (jest, this repo):** 3 more suites, the first unit tests under
-  `src/main/vault/` — the namespace-aware `covers()`, `vault_getPublicData`
+  `src/main/vault/` — the namespace-aware `covers()`, `vault_getSharedData`
   routing and its refusals (wrong tab → `4900` with the engine never called),
   `params.origin` forwarded verbatim, the always-granted set excluding the
   cross-origin method, grant persistence including `foreignReads` clearing on
@@ -313,7 +313,7 @@ Two costs worth knowing before the first bug report:
 
 | Decision | Why | Rejected |
 | --- | --- | --- |
-| `/public` as a reserved subtree | location is the mark; cannot be mis-set | a per-field `shareable` flag |
+| `/shared` as a reserved subtree | location is the mark; cannot be mis-set | a per-field `shareable` flag |
 | Read-only cross-partition access | a cross-origin write is a different feature with a different threat model | cross-origin `set`/`patch` |
 | No cross-origin `subscribe` | a push channel across partitions is a side channel | polling, which this forces |
 | Reads declared at `connect` | one sheet covers everything a site wants | a second mid-session prompt |
@@ -323,7 +323,7 @@ Two costs worth knowing before the first bug report:
 | No new site-facing channel | `vault:provider-request` is already the one surface | `vault:get-public-data` |
 | Switch a read off, keep the grant | the user's "off" should be restorable without re-approving paths | remove-only |
 | One `enabled` flag, toggled from either end | it is one grant; a live colour on the owner's page for a read the reader switched off said it was on | a per-side state |
-| The row names the partition, not its pointers | a JSON Pointer means nothing to the person approving it, and `/public` on every row said nothing | listing paths on the row |
+| The row names the partition, not its pointers | a JSON Pointer means nothing to the person approving it, and `/shared` on every row said nothing | listing paths on the row |
 
 ## 12. Accepted risks, stated plainly
 
@@ -370,8 +370,8 @@ npm run styles:inventory -- --write   # colour-literal ratchet; expect an empty 
 ```
 
 A three-site mock for the cross-partition flow lives in this repo at
-[`examples/public-reads-mock/`](../examples/public-reads-mock/) (`pnpm
-serve:public-reads`): two owners and a reader, one port, distinct hosts. Its
+[`examples/shared-reads-mock/`](../examples/shared-reads-mock/) (`pnpm
+serve:shared-reads`): two owners and a reader, one port, distinct hosts. Its
 README gives the order to drive it in, which matters — a reader that asks
 before the owner publishes reads `null`, and so does a broken wiring. The host matters — `*.localhost` namespaces are keyed by host *and*
 port, so `owner.localhost:8799` and `owner2.localhost:8799` are two partitions

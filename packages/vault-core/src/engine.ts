@@ -17,7 +17,7 @@ import {
   MAX_PATHS_PER_REQUEST,
   MAX_FOREIGN_ORIGINS,
   MAX_FOREIGN_PATHS_PER_ORIGIN,
-  PUBLIC_POINTER,
+  SHARED_POINTER,
   MAX_PATCH_OPS,
   MAX_NAMESPACE_BYTES,
   MAX_JSON_DEPTH,
@@ -65,7 +65,7 @@ import {
   fieldAllows,
   foreignReadAllows,
   intersectScopes,
-  isUnderPublic,
+  isUnderShared,
   normalizeFields,
   pathIsSensitive,
   pointerCovers,
@@ -128,7 +128,7 @@ export type NotificationEmitter = (sessionId: string, notification: JsonRpcNotif
  * Throws here, at connect, rather than returning empty: no owner partition has
  * been addressed yet, so this is a pure judgment on the READER's own syntax and
  * telling an honest developer their declaration was out of scope leaks nothing.
- * Contrast `localGetPublic`, which must answer the same path with `null` — by
+ * Contrast `localGetShared`, which must answer the same path with `null` — by
  * then a throw would discriminate "unapproved owner" from "owner with nothing
  * there". The asymmetry is deliberate; see the comment there.
  */
@@ -137,11 +137,11 @@ function normalizeForeignPaths(paths: string[]): string[] {
   for (const p of paths ?? []) {
     // Same validation a write gets: length, depth, and the prototype tokens.
     parsePointer(p);
-    if (!isUnderPublic(p)) {
-      throw VaultError.of("FieldOutOfScope", `cross-origin reads are limited to ${PUBLIC_POINTER}`);
+    if (!isUnderShared(p)) {
+      throw VaultError.of("FieldOutOfScope", `cross-origin reads are limited to ${SHARED_POINTER}`);
     }
     // The whole subtree subsumes every leaf, so it collapses the list.
-    if (p === PUBLIC_POINTER) return [PUBLIC_POINTER];
+    if (p === SHARED_POINTER) return [SHARED_POINTER];
     kept.push(p);
   }
   return [...new Set(kept)];
@@ -588,8 +588,8 @@ export class VaultEngine {
       // A rule on the empty pointer covers everything, so without this a site
       // granted the whole document could publish with the word "public" never
       // appearing on the sheet the user approved.
-      if (isUnderPublic(path) && !publishAllows(session.grant.fields, path)) {
-        throw VaultError.of("WriteForbidden", `publishing to ${path} needs an explicit ${PUBLIC_POINTER} grant`);
+      if (isUnderShared(path) && !publishAllows(session.grant.fields, path)) {
+        throw VaultError.of("WriteForbidden", `publishing to ${path} needs an explicit ${SHARED_POINTER} grant`);
       }
       if (change.op === "remove") {
         if (!fieldAllows(session.grant.fields, path, "write")) {
@@ -922,7 +922,7 @@ export class VaultEngine {
    * One owner per call, never a batch: a multi-owner call would make one request
    * decrypt up to `MAX_FOREIGN_ORIGINS` other partitions.
    */
-  async localGetPublic(
+  async localGetShared(
     sessionId: string,
     origin: string,
     paths: string[],
@@ -930,7 +930,7 @@ export class VaultEngine {
     // The order of these gates is observable and tested: a reader without the
     // method must be refused before anything it passes is even parsed.
     const session = await this.requireLocalSession(sessionId);
-    this.assertLocalMethod(session, Method.GetPublicData);
+    this.assertLocalMethod(session, Method.GetSharedData);
     if (paths.length > MAX_PATHS_PER_REQUEST) throw VaultError.of("QuotaExceeded", "too many paths");
 
     let namespace: string;

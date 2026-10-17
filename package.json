@@ -21,7 +21,7 @@
     "glue:smoke": "tsx examples/freedom-browser-integration/test/glue-smoke.cjs",
     "bundle:freedom": "node tools/bundle-for-freedom.mjs",
     "serve:vault-test": "python3 -m http.server 8765 --directory examples/freedom-browser-integration/test-page",
-    "serve:public-reads": "node examples/public-reads-mock/server.mjs"
+    "serve:shared-reads": "node examples/shared-reads-mock/server.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

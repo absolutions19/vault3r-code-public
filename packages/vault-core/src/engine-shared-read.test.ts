@@ -2,7 +2,7 @@
  * Cross-origin reads of a published subtree.
  *
  * One site may read another's data, but only what the owner wrote under
- * `PUBLIC_POINTER`, and only after the user approved that reader→owner pair.
+ * `SHARED_POINTER`, and only after the user approved that reader→owner pair.
  * Two properties carry the whole feature and most of this file tests them:
  *
  *  - A reader's own field rules confer NOTHING across the boundary. A grant on
@@ -20,7 +20,7 @@ import {
   MAX_FOREIGN_ORIGINS,
   MAX_FOREIGN_PATHS_PER_ORIGIN,
   MAX_PATHS_PER_REQUEST,
-  PUBLIC_POINTER,
+  SHARED_POINTER,
   type RequestedScope,
 } from "@vault/protocol";
 import { VaultEngine } from "./engine.js";
@@ -53,7 +53,7 @@ function ownerScopes(): RequestedScope[] {
       methods: [Method.GetData, Method.SetData],
       fields: [
         { path: "/profile", read: true, write: true },
-        { path: PUBLIC_POINTER, read: true, write: true },
+        { path: SHARED_POINTER, read: true, write: true },
       ],
     },
   ];
@@ -63,7 +63,7 @@ function ownerScopes(): RequestedScope[] {
 function readerScopes(paths: string[], origin = OWNER): RequestedScope[] {
   return [
     {
-      methods: [Method.GetData, Method.SetData, Method.GetPublicData],
+      methods: [Method.GetData, Method.SetData, Method.GetSharedData],
       fields: [{ path: "/own", read: true, write: true }],
       foreign: [{ origin, paths }],
     },
@@ -83,7 +83,7 @@ async function expectCode(p: Promise<unknown>, codeName: string): Promise<void> 
 /** An engine where the owner has published `values`, plus a connected reader. */
 async function withPublished(
   values: Record<string, unknown>,
-  readerPaths: string[] = [PUBLIC_POINTER],
+  readerPaths: string[] = [SHARED_POINTER],
   consent = approveAll(),
 ) {
   const engine = newEngine(consent);
@@ -103,38 +103,38 @@ describe("cross-origin published reads", () => {
   describe("the happy paths", () => {
     it("reads a named pointer the owner published", async () => {
       const { engine, reader } = await withPublished(
-        { "/public/displayName": "ada" },
-        ["/public/displayName"],
+        { "/shared/displayName": "ada" },
+        ["/shared/displayName"],
       );
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
-      expect(res.values["/public/displayName"]).toBe("ada");
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
+      expect(res.values["/shared/displayName"]).toBe("ada");
     });
 
     it("reads any leaf under a wholesale grant, and nulls one never written", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, [
-        "/public/displayName",
-        "/public/never",
+      const res = await engine.localGetShared(reader.sessionId, OWNER, [
+        "/shared/displayName",
+        "/shared/never",
       ]);
-      expect(res.values).toEqual({ "/public/displayName": "ada", "/public/never": null });
+      expect(res.values).toEqual({ "/shared/displayName": "ada", "/shared/never": null });
     });
 
     it("collapses a declaration that names the subtree and a leaf", async () => {
-      const { reader } = await withPublished({ "/public/displayName": "ada" }, [
-        PUBLIC_POINTER,
-        "/public/displayName",
+      const { reader } = await withPublished({ "/shared/displayName": "ada" }, [
+        SHARED_POINTER,
+        "/shared/displayName",
       ]);
       expect(reader.grant.foreignReads).toEqual([
-        { namespace: expect.any(String), origin: OWNER, paths: [PUBLIC_POINTER] },
+        { namespace: expect.any(String), origin: OWNER, paths: [SHARED_POINTER] },
       ]);
     });
 
     it("returns values and nothing else — no version to poll the owner with", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
       expect(Object.keys(res)).toEqual(["values"]);
     });
   });
@@ -143,7 +143,7 @@ describe("cross-origin published reads", () => {
     it("gives a whole-document read grant no cross-origin access at all", async () => {
       const engine = newEngine(approveAll());
       const owner = await engine.connectLocal({ origin: OWNER, appMetadata: {}, requestedScopes: ownerScopes() });
-      await engine.localSet(owner.sessionId, { "/public/displayName": "ada" });
+      await engine.localSet(owner.sessionId, { "/shared/displayName": "ada" });
 
       // The lazy scope: read and write on the empty pointer, which covers every
       // path in the reader's OWN document — and declares no foreign read.
@@ -152,14 +152,14 @@ describe("cross-origin published reads", () => {
         appMetadata: {},
         requestedScopes: [
           {
-            methods: [Method.GetData, Method.SetData, Method.GetPublicData],
+            methods: [Method.GetData, Method.SetData, Method.GetSharedData],
             fields: [{ path: "", read: true, write: true }],
           },
         ],
       });
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
-      expect(res.values["/public/displayName"]).toBe(null);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
+      expect(res.values["/shared/displayName"]).toBe(null);
       expect(reader.grant.foreignReads).toEqual([]);
     });
 
@@ -170,10 +170,10 @@ describe("cross-origin published reads", () => {
       const reader = await engine.connectLocal({
         origin: READER,
         appMetadata: {},
-        requestedScopes: readerScopes([PUBLIC_POINTER]),
+        requestedScopes: readerScopes([SHARED_POINTER]),
       });
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/profile/secret"]);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/profile/secret"]);
       expect(res.values["/profile/secret"]).toBe(null);
     });
 
@@ -185,68 +185,68 @@ describe("cross-origin published reads", () => {
         origin: OWNER,
         appMetadata: {},
         requestedScopes: [
-          { methods: [Method.SetData], fields: [{ path: "/publicity", read: true, write: true }] },
+          { methods: [Method.SetData], fields: [{ path: "/sharedly", read: true, write: true }] },
         ],
       });
-      await engine.localSet(owner2.sessionId, { "/publicity/x": "nope" });
+      await engine.localSet(owner2.sessionId, { "/sharedly/x": "nope" });
       expect(owner.namespace).toBe(owner2.namespace);
 
       const reader = await engine.connectLocal({
         origin: READER,
         appMetadata: {},
-        requestedScopes: readerScopes([PUBLIC_POINTER]),
+        requestedScopes: readerScopes([SHARED_POINTER]),
       });
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/publicity/x"]);
-      expect(res.values["/publicity/x"]).toBe(null);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/sharedly/x"]);
+      expect(res.values["/sharedly/x"]).toBe(null);
     });
   });
 
   describe("absence is uniform (no existence oracle)", () => {
     it("answers identically for an unapproved owner and a site never visited", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
 
-      const unapproved = await engine.localGetPublic(reader.sessionId, "https://other.example", [
-        "/public/displayName",
+      const unapproved = await engine.localGetShared(reader.sessionId, "https://other.example", [
+        "/shared/displayName",
       ]);
-      const neverSeen = await engine.localGetPublic(reader.sessionId, "https://nobody.example", [
-        "/public/displayName",
+      const neverSeen = await engine.localGetShared(reader.sessionId, "https://nobody.example", [
+        "/shared/displayName",
       ]);
 
       // Asserted as an equality between the two results, not two separate shape
       // checks: the property is that they cannot be told apart.
       expect(unapproved).toEqual(neverSeen);
-      expect(unapproved).toEqual({ values: { "/public/displayName": null } });
+      expect(unapproved).toEqual({ values: { "/shared/displayName": null } });
     });
 
     it("answers identically for an approved owner that published nothing", async () => {
       const { engine, reader } = await withPublished({});
 
-      const empty = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
-      const neverSeen = await engine.localGetPublic(reader.sessionId, "https://nobody.example", [
-        "/public/displayName",
+      const empty = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
+      const neverSeen = await engine.localGetShared(reader.sessionId, "https://nobody.example", [
+        "/shared/displayName",
       ]);
       expect(empty).toEqual(neverSeen);
     });
 
     it("does not reject a path outside the subtree at read time", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
 
       // connect throws for the same path (see below); a read must not, or the
       // throw distinguishes "unapproved" from "nothing there".
       await expect(
-        engine.localGetPublic(reader.sessionId, OWNER, ["/profile/secret"]),
+        engine.localGetShared(reader.sessionId, OWNER, ["/profile/secret"]),
       ).resolves.toEqual({ values: { "/profile/secret": null } });
     });
 
     it("survives the owner's partition being deleted, without a distinct error", async () => {
-      const { engine, owner, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, owner, reader } = await withPublished({ "/shared/displayName": "ada" });
 
       await engine.adminDeletePartition(storageKeyForNamespace(owner.namespace));
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
       // Specifically NOT KeyInvalidated: deleteNamespace clears the manifest
       // entry, so a missing blob reads as "never existed" rather than rollback.
-      expect(res).toEqual({ values: { "/public/displayName": null } });
+      expect(res).toEqual({ values: { "/shared/displayName": null } });
     });
   });
 
@@ -287,7 +287,7 @@ describe("cross-origin published reads", () => {
         engine.connectLocal({
           origin: READER,
           appMetadata: {},
-          requestedScopes: readerScopes([PUBLIC_POINTER], origin),
+          requestedScopes: readerScopes([SHARED_POINTER], origin),
         }),
         "InvalidRequest",
       );
@@ -298,7 +298,7 @@ describe("cross-origin published reads", () => {
       const reader = await engine.connectLocal({
         origin: READER,
         appMetadata: {},
-        requestedScopes: readerScopes([PUBLIC_POINTER], READER),
+        requestedScopes: readerScopes([SHARED_POINTER], READER),
       });
       expect(reader.grant.foreignReads).toEqual([]);
     });
@@ -307,13 +307,13 @@ describe("cross-origin published reads", () => {
       const engine = newEngine(approveAll());
       const foreign = Array.from({ length: MAX_FOREIGN_ORIGINS + 1 }, (_, i) => ({
         origin: `https://owner${i}.example`,
-        paths: [PUBLIC_POINTER],
+        paths: [SHARED_POINTER],
       }));
       await expectCode(
         engine.connectLocal({
           origin: READER,
           appMetadata: {},
-          requestedScopes: [{ methods: [Method.GetPublicData], fields: [], foreign }],
+          requestedScopes: [{ methods: [Method.GetSharedData], fields: [], foreign }],
         }),
         "QuotaExceeded",
       );
@@ -321,7 +321,7 @@ describe("cross-origin published reads", () => {
 
     it("caps the paths named for one owner", async () => {
       const engine = newEngine(approveAll());
-      const paths = Array.from({ length: MAX_FOREIGN_PATHS_PER_ORIGIN + 1 }, (_, i) => `/public/p${i}`);
+      const paths = Array.from({ length: MAX_FOREIGN_PATHS_PER_ORIGIN + 1 }, (_, i) => `/shared/p${i}`);
       await expectCode(
         engine.connectLocal({ origin: READER, appMetadata: {}, requestedScopes: readerScopes(paths) }),
         "QuotaExceeded",
@@ -333,23 +333,23 @@ describe("cross-origin published reads", () => {
     it("grants nothing when the consent adapter says nothing (fail closed)", async () => {
       // AutoConsent's default: approved, with no grantedForeignReads at all.
       const { engine, reader } = await withPublished(
-        { "/public/displayName": "ada" },
-        [PUBLIC_POINTER],
+        { "/shared/displayName": "ada" },
+        [SHARED_POINTER],
         new AutoConsent(),
       );
       expect(reader.grant.foreignReads).toEqual([]);
 
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
-      expect(res.values["/public/displayName"]).toBe(null);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
+      expect(res.values["/shared/displayName"]).toBe(null);
     });
 
     it("honours a narrowed decision", async () => {
       const narrow = new AutoConsent(() => ({ approved: true, grantedForeignReads: [] }));
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" }, [PUBLIC_POINTER], narrow);
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" }, [SHARED_POINTER], narrow);
 
       expect(reader.grant.foreignReads).toEqual([]);
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]);
-      expect(res.values["/public/displayName"]).toBe(null);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]);
+      expect(res.values["/shared/displayName"]).toBe(null);
     });
 
     it("drops an owner the consent UI invents", async () => {
@@ -357,10 +357,10 @@ describe("cross-origin published reads", () => {
         approved: true,
         grantedForeignReads: [
           ...(req.foreignReads ?? []),
-          { namespace: "web:elsewhere.example", origin: "https://elsewhere.example", paths: [PUBLIC_POINTER] },
+          { namespace: "web:elsewhere.example", origin: "https://elsewhere.example", paths: [SHARED_POINTER] },
         ],
       }));
-      const { reader } = await withPublished({}, [PUBLIC_POINTER], inventive);
+      const { reader } = await withPublished({}, [SHARED_POINTER], inventive);
 
       expect(reader.grant.foreignReads.map((e) => e.origin)).toEqual([OWNER]);
     });
@@ -368,18 +368,18 @@ describe("cross-origin published reads", () => {
     it("drops a path the consent UI widens beyond what was requested", async () => {
       const widening = new AutoConsent((req) => ({
         approved: true,
-        grantedForeignReads: (req.foreignReads ?? []).map((e) => ({ ...e, paths: [PUBLIC_POINTER] })),
+        grantedForeignReads: (req.foreignReads ?? []).map((e) => ({ ...e, paths: [SHARED_POINTER] })),
       }));
       const { engine, reader } = await withPublished(
-        { "/public/a": "A", "/public/b": "B" },
-        ["/public/a"],
+        { "/shared/a": "A", "/shared/b": "B" },
+        ["/shared/a"],
         widening,
       );
 
       // Requested only /public/a, so the widened /public is not covered by it.
       expect(reader.grant.foreignReads).toEqual([]);
-      const res = await engine.localGetPublic(reader.sessionId, OWNER, ["/public/b"]);
-      expect(res.values["/public/b"]).toBe(null);
+      const res = await engine.localGetShared(reader.sessionId, OWNER, ["/shared/b"]);
+      expect(res.values["/shared/b"]).toBe(null);
     });
   });
 
@@ -389,7 +389,7 @@ describe("cross-origin published reads", () => {
       const reader = await engine.connectLocal({
         origin: READER,
         appMetadata: {},
-        // GetPublicData deliberately absent.
+        // GetSharedData deliberately absent.
         requestedScopes: [{ methods: [Method.GetData], fields: [{ path: "/own", read: true, write: true }] }],
       });
 
@@ -397,23 +397,23 @@ describe("cross-origin published reads", () => {
       // origin is resolved, so a reader without the grant learns nothing about
       // whether its garbage origin was even parseable.
       await expectCode(
-        engine.localGetPublic(reader.sessionId, "not a url", ["/public/x"]),
+        engine.localGetShared(reader.sessionId, "not a url", ["/shared/x"]),
         "Unauthorized",
       );
     });
 
     it("caps paths per request independently of the stored grant", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
-      const many = Array.from({ length: MAX_PATHS_PER_REQUEST + 1 }, (_, i) => `/public/p${i}`);
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
+      const many = Array.from({ length: MAX_PATHS_PER_REQUEST + 1 }, (_, i) => `/shared/p${i}`);
 
-      await expectCode(engine.localGetPublic(reader.sessionId, OWNER, many), "QuotaExceeded");
+      await expectCode(engine.localGetShared(reader.sessionId, OWNER, many), "QuotaExceeded");
     });
 
     it("allows a wholesale grant to serve many leaf reads in one call", async () => {
-      const { engine, reader } = await withPublished({ "/public/a": "A" });
-      const many = Array.from({ length: MAX_PATHS_PER_REQUEST }, (_, i) => `/public/p${i}`);
+      const { engine, reader } = await withPublished({ "/shared/a": "A" });
+      const many = Array.from({ length: MAX_PATHS_PER_REQUEST }, (_, i) => `/shared/p${i}`);
 
-      await expect(engine.localGetPublic(reader.sessionId, OWNER, many)).resolves.toBeTruthy();
+      await expect(engine.localGetShared(reader.sessionId, OWNER, many)).resolves.toBeTruthy();
     });
 
     it("refuses a locked vault", async () => {
@@ -426,23 +426,23 @@ describe("cross-origin published reads", () => {
         clock,
       });
       const owner = await engine.connectLocal({ origin: OWNER, appMetadata: {}, requestedScopes: ownerScopes() });
-      await engine.localSet(owner.sessionId, { "/public/displayName": "ada" });
+      await engine.localSet(owner.sessionId, { "/shared/displayName": "ada" });
       const reader = await engine.connectLocal({
         origin: READER,
         appMetadata: {},
-        requestedScopes: readerScopes([PUBLIC_POINTER]),
+        requestedScopes: readerScopes([SHARED_POINTER]),
       });
 
       keystore.lock();
-      await expectCode(engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]), "VaultLocked");
+      await expectCode(engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]), "VaultLocked");
     });
 
     it("ends with the reader's session", async () => {
-      const { engine, reader } = await withPublished({ "/public/displayName": "ada" });
+      const { engine, reader } = await withPublished({ "/shared/displayName": "ada" });
 
       await engine.adminRevoke(reader.sessionId);
       await expectCode(
-        engine.localGetPublic(reader.sessionId, OWNER, ["/public/displayName"]),
+        engine.localGetShared(reader.sessionId, OWNER, ["/shared/displayName"]),
         "Disconnected",
       );
     });
@@ -461,7 +461,7 @@ describe("cross-origin published reads", () => {
 
       // fieldAllows says yes to this; publishAllows is what refuses it.
       await expectCode(
-        engine.localSet(owner.sessionId, { "/public/x": "leak" }),
+        engine.localSet(owner.sessionId, { "/shared/x": "leak" }),
         "WriteForbidden",
       );
       // The same grant still writes everywhere else.
@@ -475,7 +475,7 @@ describe("cross-origin published reads", () => {
       const owner = await engine.connectLocal({ origin: OWNER, appMetadata: {}, requestedScopes: ownerScopes() });
 
       await expect(
-        engine.localSet(owner.sessionId, { "/public/x": "published" }),
+        engine.localSet(owner.sessionId, { "/shared/x": "published" }),
       ).resolves.toBeTruthy();
     });
   });

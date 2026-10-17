@@ -75,7 +75,7 @@ export interface FieldRule {
 export interface ForeignReadRule {
   origin: string;
   /**
-   * Pointers wanted, each `PUBLIC_POINTER` or a descendant. `["/public"]` asks
+   * Pointers wanted, each `SHARED_POINTER` or a descendant. `["/shared"]` asks
    * for the whole published subtree, including whatever the owner adds later.
    */
   paths: string[];
@@ -91,7 +91,7 @@ export interface ForeignReadGrant {
   namespace: Namespace;
   /** The origin as the vault canonicalised it. Display only. */
   origin: string;
-  /** Clamped pointers, each `PUBLIC_POINTER` or below. */
+  /** Clamped pointers, each `SHARED_POINTER` or below. */
   paths: string[];
 }
 

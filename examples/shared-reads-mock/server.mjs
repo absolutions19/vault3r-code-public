@@ -2,9 +2,9 @@
  * Two mock sites for testing cross-partition vault reads.
  *
  * One server, two origins, routed by Host header:
- *   http://owner.localhost:8799   publishes under /public
+ *   http://owner.localhost:8799   publishes under /shared
  *   http://owner2.localhost:8799  a second, independent owner
- *   http://reader.localhost:8799  asks to read one or both owners' /public
+ *   http://reader.localhost:8799  asks to read one or both owners' /shared
  *
  * The port matters. For *.localhost hosts the vault keys the partition by port
  * as well as host (`web:owner.localhost:8799`), so the origin the reader names
@@ -99,16 +99,16 @@ const OWNER_BODY = (origin, host, label) => `
 
 <section>
   <h2>1 &middot; Connect</h2>
-  <p>Asks for its own <code>/private/notes</code> and for <code>/public</code>. Ticking
-     <strong>write</strong> on the <code>/public</code> row should raise the blue note
+  <p>Asks for its own <code>/private/notes</code> and for <code>/shared</code>. Ticking
+     <strong>write</strong> on the <code>/shared</code> row should raise the blue note
      on the consent sheet — that note is the only place the user learns
-     <code>/public</code> is the shareable area.</p>
+     <code>/shared</code> is the shareable area.</p>
   <button class="primary" id="connect">Connect</button>
 </section>
 
 <section>
   <h2>2 &middot; Publish</h2>
-  <p>Writes to <code>/public/displayName</code>, which is what the reader will ask for.</p>
+  <p>Writes to <code>/shared/displayName</code>, which is what the reader will ask for.</p>
   <input id="name" value="ada" aria-label="display name" />
   <button id="publish" disabled>Publish</button>
   <button id="write-private" disabled>Write something private</button>
@@ -118,7 +118,7 @@ const OWNER_BODY = (origin, host, label) => `
 <section>
   <h2>3 &middot; The publish gate</h2>
   <p>Connects a second time asking for the <em>whole document</em> instead, then tries to
-     write under <code>/public</code>. It should be refused: a grant that merely covers
+     write under <code>/shared</code>. It should be refused: a grant that merely covers
      the subtree does not carry the right to publish, or a site could publish without the
      user ever seeing the word.</p>
   <button id="gate" disabled>Try publishing without an explicit grant</button>
@@ -135,7 +135,7 @@ const READER_BODY = `
      <code>${OWNER_ORIGIN}</code>. The foreign group should offer <strong>read only</strong> —
      no write checkbox at all.</p>
   <button class="primary" id="connect-named">Connect — one named pointer</button>
-  <button id="connect-wholesale">Connect — all of /public</button>
+  <button id="connect-wholesale">Connect — all of /shared</button>
   <button id="connect-both">Connect — naming BOTH owners</button>
   <p style="margin-top:.6rem">The wholesale ask should render differently: one row saying it
      covers anything the owner adds later, rather than a list of fields.</p>
@@ -143,11 +143,11 @@ const READER_BODY = `
 
 <section>
   <h2>2 &middot; Read the owner's published data</h2>
-  <button id="read" disabled>Read /public/displayName</button>
-  <button id="read2" disabled>Read owner2's /public/displayName</button>
+  <button id="read" disabled>Read /shared/displayName</button>
+  <button id="read2" disabled>Read owner2's /shared/displayName</button>
   <button id="read-private" disabled>Try reading the owner's /private/notes</button>
   <p style="margin-top:.6rem">The second should come back <code>null</code>, not an error —
-     nothing outside <code>/public</code> can cross the boundary.</p>
+     nothing outside <code>/shared</code> can cross the boundary.</p>
 </section>
 
 <section>
@@ -180,8 +180,8 @@ document.getElementById('connect').onclick = async () => {
           methods: ['vault_getData', 'vault_setData'],
           fields: [
             { path: '/private/notes', read: true, write: true },
-            // Explicit: publishing needs a grant rooted at or below /public.
-            { path: '/public', read: true, write: true },
+            // Explicit: publishing needs a grant rooted at or below /shared.
+            { path: '/shared', read: true, write: true },
           ],
         },
       ],
@@ -195,8 +195,8 @@ document.getElementById('connect').onclick = async () => {
 document.getElementById('publish').onclick = async () => {
   try {
     const value = document.getElementById('name').value;
-    const res = await window.vault.set(session.sessionId, { '/public/displayName': value });
-    log('published /public/displayName =', JSON.stringify(value), res);
+    const res = await window.vault.set(session.sessionId, { '/shared/displayName': value });
+    log('published /shared/displayName =', JSON.stringify(value), res);
   } catch (err) { fail(err); }
 };
 
@@ -209,7 +209,7 @@ document.getElementById('write-private').onclick = async () => {
 
 document.getElementById('read-own').onclick = async () => {
   try {
-    const res = await window.vault.get(session.sessionId, ['/public/displayName', '/private/notes']);
+    const res = await window.vault.get(session.sessionId, ['/shared/displayName', '/private/notes']);
     log('my own data', res.values);
   } catch (err) { fail(err); }
 };
@@ -225,14 +225,14 @@ document.getElementById('gate').onclick = async () => {
     });
     log('second session, whole-document grant', { namespace: whole.namespace });
     try {
-      await window.vault.set(whole.sessionId, { '/public/sneaky': 'published without asking' });
+      await window.vault.set(whole.sessionId, { '/shared/sneaky': 'published without asking' });
       log('✗ UNEXPECTED: the publish gate let this through');
     } catch (err) {
       log('✓ refused, as it should be:', err.message, '(code ' + err.code + ')');
     }
     // The same grant still writes everywhere else.
     const ok = await window.vault.set(whole.sessionId, { '/elsewhere/fine': 1 });
-    log('✓ and the same grant still writes outside /public', ok);
+    log('✓ and the same grant still writes outside /shared', ok);
   } catch (err) { fail(err); }
 };
 `;
@@ -255,7 +255,7 @@ async function connect(foreign, label) {
     session = await window.vault.connect({
       requestedScopes: [
         {
-          methods: ['vault_getData', 'vault_setData', 'vault_getPublicData'],
+          methods: ['vault_getData', 'vault_setData', 'vault_getSharedData'],
           fields: [{ path: '/own/seen', read: true, write: true }],
           foreign,
         },
@@ -274,45 +274,45 @@ async function connect(foreign, label) {
 }
 
 document.getElementById('connect-named').onclick = () =>
-  connect([{ origin: OWNER_ORIGIN, paths: ['/public/displayName'] }], 'one named pointer');
+  connect([{ origin: OWNER_ORIGIN, paths: ['/shared/displayName'] }], 'one named pointer');
 document.getElementById('connect-wholesale').onclick = () =>
-  connect([{ origin: OWNER_ORIGIN, paths: ['/public'] }], 'all of /public');
+  connect([{ origin: OWNER_ORIGIN, paths: ['/shared'] }], 'all of /shared');
 // Asking for a SECOND owner is what forces a re-prompt when the first owner's
 // read is already remembered: the sheet shows both, and both arrive ticked.
 document.getElementById('connect-both').onclick = () =>
   connect(
     [
-      { origin: OWNER_ORIGIN, paths: ['/public/displayName'] },
-      { origin: OWNER2_ORIGIN, paths: ['/public/displayName'] },
+      { origin: OWNER_ORIGIN, paths: ['/shared/displayName'] },
+      { origin: OWNER2_ORIGIN, paths: ['/shared/displayName'] },
     ],
     'both owners'
   );
 
 document.getElementById('read').onclick = async () => {
   try {
-    const res = await window.vault.readPublic(session.sessionId, OWNER_ORIGIN, ['/public/displayName']);
-    log('readPublic ->', res.values);
+    const res = await window.vault.readShared(session.sessionId, OWNER_ORIGIN, ['/shared/displayName']);
+    log('readShared ->', res.values);
   } catch (err) { fail(err); }
 };
 
 document.getElementById('read2').onclick = async () => {
   try {
-    const res = await window.vault.readPublic(session.sessionId, OWNER2_ORIGIN, ['/public/displayName']);
-    log('readPublic (owner2) ->', res.values);
+    const res = await window.vault.readShared(session.sessionId, OWNER2_ORIGIN, ['/shared/displayName']);
+    log('readShared (owner2) ->', res.values);
   } catch (err) { fail(err); }
 };
 
 document.getElementById('read-private').onclick = async () => {
   try {
-    const res = await window.vault.readPublic(session.sessionId, OWNER_ORIGIN, ['/private/notes']);
+    const res = await window.vault.readShared(session.sessionId, OWNER_ORIGIN, ['/private/notes']);
     log('the owner\\'s private path ->', res.values, '(null, and no error)');
   } catch (err) { fail(err); }
 };
 
 document.getElementById('oracle').onclick = async () => {
   try {
-    const visited = await window.vault.readPublic(session.sessionId, 'http://owner.localhost:8765', ['/public/displayName']);
-    const nonexistent = await window.vault.readPublic(session.sessionId, 'https://nothing-here.invalid', ['/public/displayName']);
+    const visited = await window.vault.readShared(session.sessionId, 'http://owner.localhost:8765', ['/shared/displayName']);
+    const nonexistent = await window.vault.readShared(session.sessionId, 'https://nothing-here.invalid', ['/shared/displayName']);
     log('an unapproved origin ->', visited.values);
     log('an origin that does not exist ->', nonexistent.values);
     log(

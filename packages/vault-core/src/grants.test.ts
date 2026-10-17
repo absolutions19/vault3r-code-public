@@ -1,14 +1,14 @@
 /**
  * Grant-scope units. These four functions decide, between them, what a site may
  * touch in its own document and what it may read in someone else's — so the
- * boundaries below (token-wise matching, and which pointer covers `/public`) are
+ * boundaries below (token-wise matching, and which pointer covers `/shared`) are
  * the whole of the cross-origin rule.
  */
 
 import { describe, expect, it } from "vitest";
-import { PUBLIC_POINTER } from "@vault/protocol";
+import { SHARED_POINTER } from "@vault/protocol";
 import type { FieldRule } from "@vault/protocol";
-import { fieldAllows, foreignReadAllows, isUnderPublic, pointerCovers, publishAllows } from "./grants.js";
+import { fieldAllows, foreignReadAllows, isUnderShared, pointerCovers, publishAllows } from "./grants.js";
 
 describe("pointerCovers", () => {
   it("covers a descendant but not a sibling with a shared prefix", () => {
@@ -26,38 +26,38 @@ describe("pointerCovers", () => {
   });
 });
 
-describe("isUnderPublic", () => {
+describe("isUnderShared", () => {
   it("accepts the subtree root and its descendants", () => {
-    expect(isUnderPublic(PUBLIC_POINTER)).toBe(true);
-    expect(isUnderPublic("/public/profile/displayName")).toBe(true);
+    expect(isUnderShared(SHARED_POINTER)).toBe(true);
+    expect(isUnderShared("/shared/profile/displayName")).toBe(true);
   });
 
   it("rejects a name that merely starts with the same letters", () => {
-    expect(isUnderPublic("/publicity")).toBe(false);
-    expect(isUnderPublic("/publ")).toBe(false);
+    expect(isUnderShared("/sharedly")).toBe(false);
+    expect(isUnderShared("/publ")).toBe(false);
   });
 
   it("rejects anything outside the subtree, including whole-document pointers", () => {
-    expect(isUnderPublic("/profile")).toBe(false);
-    expect(isUnderPublic("")).toBe(false);
-    expect(isUnderPublic("/")).toBe(false);
+    expect(isUnderShared("/profile")).toBe(false);
+    expect(isUnderShared("")).toBe(false);
+    expect(isUnderShared("/")).toBe(false);
   });
 });
 
 describe("foreignReadAllows", () => {
   it("covers a leaf under a wholesale grant", () => {
-    const entry = { paths: [PUBLIC_POINTER] };
-    expect(foreignReadAllows(entry, "/public/profile/displayName")).toBe(true);
+    const entry = { paths: [SHARED_POINTER] };
+    expect(foreignReadAllows(entry, "/shared/profile/displayName")).toBe(true);
   });
 
   it("does not let a leaf grant reach a sibling leaf", () => {
-    const entry = { paths: ["/public/profile/displayName"] };
-    expect(foreignReadAllows(entry, "/public/profile/email")).toBe(false);
-    expect(foreignReadAllows(entry, "/public/profile/displayNameExtra")).toBe(false);
+    const entry = { paths: ["/shared/profile/displayName"] };
+    expect(foreignReadAllows(entry, "/shared/profile/email")).toBe(false);
+    expect(foreignReadAllows(entry, "/shared/profile/displayNameExtra")).toBe(false);
   });
 
   it("refuses a path outside the published subtree whatever was stored", () => {
-    const entry = { paths: [PUBLIC_POINTER] };
+    const entry = { paths: [SHARED_POINTER] };
     expect(foreignReadAllows(entry, "/profile/email")).toBe(false);
     expect(foreignReadAllows(entry, "")).toBe(false);
   });
@@ -68,8 +68,8 @@ describe("foreignReadAllows", () => {
     // running as the user. A hand-edited whole-document rule must not reopen
     // the owner's private data.
     expect(foreignReadAllows({ paths: [""] }, "/profile/email")).toBe(false);
-    expect(foreignReadAllows({ paths: [""] }, "/public/x")).toBe(false);
-    expect(foreignReadAllows({ paths: ["/"] }, "/public/x")).toBe(false);
+    expect(foreignReadAllows({ paths: [""] }, "/shared/x")).toBe(false);
+    expect(foreignReadAllows({ paths: ["/"] }, "/shared/x")).toBe(false);
     expect(foreignReadAllows({ paths: ["/profile"] }, "/profile/email")).toBe(false);
   });
 
@@ -78,7 +78,7 @@ describe("foreignReadAllows", () => {
     // browser runs this code from a bundle with no typecheck. A FieldRule[] has
     // no `paths`, so it can only ever read as "nothing approved".
     const fields = [{ path: "", read: true, write: true }] as unknown as { paths: string[] };
-    expect(foreignReadAllows(fields, "/public/x")).toBe(false);
+    expect(foreignReadAllows(fields, "/shared/x")).toBe(false);
   });
 });
 
@@ -86,8 +86,8 @@ describe("publishAllows", () => {
   const rule = (path: string, write: boolean): FieldRule => ({ path, read: true, write });
 
   it("accepts a grant rooted at or below the published subtree", () => {
-    expect(publishAllows([rule(PUBLIC_POINTER, true)], "/public/profile")).toBe(true);
-    expect(publishAllows([rule("/public/profile", true)], "/public/profile/displayName")).toBe(true);
+    expect(publishAllows([rule(SHARED_POINTER, true)], "/shared/profile")).toBe(true);
+    expect(publishAllows([rule("/shared/profile", true)], "/shared/profile/displayName")).toBe(true);
   });
 
   it("refuses a whole-document grant, which is the point of the gate", () => {
@@ -95,16 +95,16 @@ describe("publishAllows", () => {
     // separately or a site granted everything publishes without the user ever
     // seeing the word "public".
     const whole = [rule("", true)];
-    expect(fieldAllows(whole, "/public/x", "write")).toBe(true);
-    expect(publishAllows(whole, "/public/x")).toBe(false);
+    expect(fieldAllows(whole, "/shared/x", "write")).toBe(true);
+    expect(publishAllows(whole, "/shared/x")).toBe(false);
   });
 
   it("refuses a read-only grant on the subtree", () => {
-    expect(publishAllows([rule(PUBLIC_POINTER, false)], "/public/x")).toBe(false);
+    expect(publishAllows([rule(SHARED_POINTER, false)], "/shared/x")).toBe(false);
   });
 
   it("refuses a grant on a neighbouring path", () => {
-    expect(publishAllows([rule("/publicity", true)], "/public/x")).toBe(false);
-    expect(publishAllows([rule("/profile", true)], "/public/x")).toBe(false);
+    expect(publishAllows([rule("/sharedly", true)], "/shared/x")).toBe(false);
+    expect(publishAllows([rule("/profile", true)], "/shared/x")).toBe(false);
   });
 });

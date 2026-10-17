@@ -222,14 +222,14 @@ window.vault.on('permissionsChanged', () => {
 await window.vault.unsubscribe(sessionId, subscriptionId);
 ```
 
-### Sharing data under `/public`
+### Sharing data under `/shared`
 
 A partition is private to its origin, with one deliberate exception: the
-reserved pointer `/public`. **Location is the mark** — there is no `shareable`
-flag. Whatever a site stores under `/public` is the part it is willing to have
+reserved pointer `/shared`. **Location is the mark** — there is no `shareable`
+flag. Whatever a site stores under `/shared` is the part it is willing to have
 other sites ask for; everything else can never leave the partition.
 
-**Publishing.** Writing under `/public` needs a granted rule rooted at or below
+**Publishing.** Writing under `/shared` needs a granted rule rooted at or below
 it. A grant on the whole document (the empty pointer) carries every other right
 but *not* this one, so a site cannot end up publishing because it asked for
 everything:
@@ -240,37 +240,37 @@ const session = await window.vault.connect({
     methods: ['vault_getData', 'vault_setData'],
     fields: [
       { path: '/private/notes', read: true, write: true },
-      { path: '/public', read: true, write: true },   // ← the publish grant
+      { path: '/shared', read: true, write: true },   // ← the publish grant
     ],
   }],
   appMetadata: { name: 'Notes' },
 });
 
-await window.vault.set(session.sessionId, { '/public/displayName': 'ada' });
+await window.vault.set(session.sessionId, { '/shared/displayName': 'ada' });
 await window.vault.set(session.sessionId, { '/private/notes': 'not for sharing' });
 ```
 
 Asking for that write raises a note on the consent sheet in so many words —
-"This site writes data marked `/public` into its partition. Other sites can read
+"This site writes data marked `/shared` into its partition. Other sites can read
 this data if you give them permission." — so the user is told at the moment they
 grant it.
 
 **Reading someone else's.** Declare the owners at `connect`, so one sheet covers
-your own fields and your cross-origin reads, then call `readPublic`:
+your own fields and your cross-origin reads, then call `readShared`:
 
 ```js
 const session = await window.vault.connect({
   requestedScopes: [{
-    methods: ['vault_getData', 'vault_setData', 'vault_getPublicData'],
+    methods: ['vault_getData', 'vault_setData', 'vault_getSharedData'],
     fields: [{ path: '/own/seen', read: true, write: true }],
-    foreign: [{ origin: 'https://notes.example', paths: ['/public/displayName'] }],
+    foreign: [{ origin: 'https://notes.example', paths: ['/shared/displayName'] }],
   }],
 });
 
-const { values } = await window.vault.readPublic(
+const { values } = await window.vault.readShared(
   session.sessionId,
   'https://notes.example',
-  ['/public/displayName'],
+  ['/shared/displayName'],
 );
 ```
 
@@ -284,11 +284,11 @@ const { values } = await window.vault.readPublic(
   holding two different partitions.
 - **Absent reads as empty.** A path the owner never wrote, an owner with no
   partition at all, an owner the user declined, a read switched off, and a
-  pointer outside `/public` all resolve to `null` with no error. That is
+  pointer outside `/shared` all resolve to `null` with no error. That is
   deliberate — anything that told them apart would let you probe which sites the
   user has visited — and it means you cannot distinguish "nothing there" from
   "not allowed". Write your code so it does not need to.
-- `vault_getPublicData` must be requested. Unlike `vault_getPermissions` it is
+- `vault_getSharedData` must be requested. Unlike `vault_getPermissions` it is
   never granted implicitly, because it is the cross-origin surface.
 
 #### Forward compatibility: letting your next version read this one
@@ -296,16 +296,16 @@ const { values } = await window.vault.readPublic(
 A partition is keyed by origin, so **the next iteration of your dApp is a
 different site**. `app.example` cannot read `v2.app.example`, and a move to a new
 domain or scheme (`https://` → `bzz://`) starts from an empty document. That is
-the isolation working, and it is also a migration problem — one `/public` solves,
+the isolation working, and it is also a migration problem — one `/shared` solves,
 if you plan for it on the way in rather than on the way out.
 
-Write anything a future version will need under `/public` from the start:
+Write anything a future version will need under `/shared` from the start:
 
 ```js
-// v1, at https://app.example — treat /public as your own export format.
+// v1, at https://app.example — treat /shared as your own export format.
 await window.vault.set(session.sessionId, {
-  '/public/schema': 1,
-  '/public/profile': { handle: 'ada', theme: 'dark' },
+  '/shared/schema': 1,
+  '/shared/profile': { handle: 'ada', theme: 'dark' },
 });
 ```
 
@@ -316,23 +316,23 @@ run:
 // v2, at https://v2.app.example
 const session = await window.vault.connect({
   requestedScopes: [{
-    methods: ['vault_getData', 'vault_setData', 'vault_getPublicData'],
+    methods: ['vault_getData', 'vault_setData', 'vault_getSharedData'],
     fields: [{ path: '', read: true, write: true }],
-    foreign: [{ origin: 'https://app.example', paths: ['/public'] }],
+    foreign: [{ origin: 'https://app.example', paths: ['/shared'] }],
   }],
 });
 
-const mine = await window.vault.get(session.sessionId, ['/public/schema']);
-if (mine.values['/public/schema'] == null) {
-  const { values } = await window.vault.readPublic(
+const mine = await window.vault.get(session.sessionId, ['/shared/schema']);
+if (mine.values['/shared/schema'] == null) {
+  const { values } = await window.vault.readShared(
     session.sessionId,
     'https://app.example',
-    ['/public/schema', '/public/profile'],
+    ['/shared/schema', '/shared/profile'],
   );
-  if (values['/public/profile'] != null) {
+  if (values['/shared/profile'] != null) {
     await window.vault.set(session.sessionId, {
-      '/public/schema': values['/public/schema'],
-      '/public/profile': values['/public/profile'],
+      '/shared/schema': values['/shared/schema'],
+      '/shared/profile': values['/shared/profile'],
     });
   }
   // Nothing there? Then there is nothing to migrate — see "absent reads as
@@ -340,14 +340,14 @@ if (mine.values['/public/schema'] == null) {
 }
 ```
 
-Naming `/public` wholesale (rather than each pointer) means the grant covers
+Naming `/shared` wholesale (rather than each pointer) means the grant covers
 whatever v1 publishes later, so a v1 update does not strand v2.
 
 What this is not:
 
 - **Not automatic.** The user approves the read, on v2's consent sheet, naming
   v1's partition. If they decline, v2 starts empty.
-- **Not private.** `/public` is readable by *any* site the user approves for it,
+- **Not private.** `/shared` is readable by *any* site the user approves for it,
   not only by your own next version. Put your migration payload there; do not
   put secrets there and rely on nobody asking.
 - **Not a copy you can revoke.** Once v2 has read a value it holds it. Switching
@@ -375,15 +375,15 @@ await window.vault.request({
 | `set(sessionId, values, baseVersion?)` | `vault_setData` | Write map of paths |
 | `patch(sessionId, ops, baseVersion?)` | `vault_patchData` | Patch ops |
 | `subscribe` / `unsubscribe` | `vault_subscribe` / `vault_unsubscribe` | Live updates |
-| `readPublic(sessionId, origin, paths)` | `vault_getPublicData` | Read another site's `/public` |
+| `readShared(sessionId, origin, paths)` | `vault_getSharedData` | Read another site's `/shared` |
 | `getPermissions(sessionId)` | `vault_getPermissions` | Current grant |
 | `disconnect(sessionId)` | `vault_revoke` | End session |
 
 ### What a dApp cannot do
 
 - Name another site's namespace, or read another origin's data — except the
-  `/public` subtree of an owner the user approved for it, named by ORIGIN and
-  resolved to a namespace by the engine. See *Sharing data under `/public`*.
+  `/shared` subtree of an owner the user approved for it, named by ORIGIN and
+  resolved to a namespace by the engine. See *Sharing data under `/shared`*.
 - Supply its own origin — the browser takes it from the tab URL.
 - Reach the owner plane (`window.vaultData` / `freedom://dapps` site list).
 - Depend on a network `.well-known` fetch for the tile icon — icons are in-band
