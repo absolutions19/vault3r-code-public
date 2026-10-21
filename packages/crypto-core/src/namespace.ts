@@ -176,6 +176,15 @@ const CASE_INSENSITIVE_DWEB_SCHEMES: ReadonlySet<string> = new Set(["ens", "bzz"
  *   without needing a loopback special case — and `http://localhost:8765` and
  *   `http://127.0.0.1:8765` are perfectly good origins. Only the relay's model
  *   needs a provable *name*.
+ * - The SCHEME is kept for dweb origins too, so `bzz://name.eth` and
+ *   `ipfs://name.eth` are two partitions. Do NOT "fix" this by folding a name
+ *   host to its bare name, however tempting the symmetry with a host's own
+ *   permission model: a name is reachable through several resolution paths,
+ *   under registries with different owners, and folding them makes every one
+ *   of those paths an entrance to the same partition. A compromised resolution
+ *   path would then reach data written over an honest one. Keeping the scheme
+ *   contains it. Carrying data across a transport change is what the shared
+ *   subtree plus user consent is for.
  *
  * The input must be an origin — `scheme://host[:port]` — not a full URL: any
  * userinfo, path, query or fragment is rejected so two different display URLs
