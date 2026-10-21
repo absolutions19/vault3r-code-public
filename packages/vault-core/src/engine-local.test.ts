@@ -75,30 +75,29 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     engine = newEngine();
   });
 
-  it("derives the same web namespace as the relay path for http(s) origins", async () => {
+  it("keys an http(s) origin on the origin itself, subdomain included", async () => {
     const r = await engine.connectLocal({
       origin: "https://app.example.com",
       appMetadata: { name: "Example App" },
       requestedScopes: scopes(),
     });
-    // A site reached through the browser lands on the exact namespace it would
-    // over the relay, so its data is the same across both transports.
-    expect(r.namespace).toBe(deriveNamespace("example.com", "registrable-domain").namespace);
-    expect(r.namespace).toBe("web:example.com");
-    expect(r.grant.namespace).toBe("web:example.com");
+    // The whole origin, not its registrable domain: `example.com` is a
+    // different site, and under eTLD+1 keying it was the same partition.
+    expect(r.namespace).toBe("web:https://app.example.com");
+    expect(r.grant.namespace).toBe("web:https://app.example.com");
     expect(r.grant.verified).toBe(true);
   });
 
-  it("gives decentralized-web origins a distinct, collision-proof namespace", async () => {
+  it("gives decentralized-web origins a namespace that cannot collide", async () => {
     const r = await engine.connectLocal({
       origin: "bzz://deadbeefcafe",
       appMetadata: { name: "Swarm dApp" },
       requestedScopes: scopes(),
     });
-    expect(r.namespace.startsWith("web:dweb:bzz:")).toBe(true);
-    // The `dweb:` infix carries a colon an eTLD+1 never can, so it can never
-    // collide with an http(s) registrable-domain namespace.
-    expect(r.namespace).not.toBe("web:example.com");
+    // The scheme is always part of the key, so no two different origins can
+    // produce one namespace — no `dweb:` infix guard needed.
+    expect(r.namespace).toBe("web:bzz://deadbeefcafe");
+    expect(r.namespace).not.toBe("web:https://deadbeefcafe");
   });
 
   it("keeps sites isolated: one origin cannot read another's data", async () => {
@@ -206,7 +205,7 @@ describe("VaultEngine — trusted in-process (local) mode", () => {
     // When granted, it returns the grant.
     const full = await engine.connectLocal({ origin: "https://gp2.example", appMetadata: {}, requestedScopes: scopes() });
     const perms = await engine.localGetPermissions(full.sessionId);
-    expect(perms.grant?.namespace).toBe("web:gp2.example");
+    expect(perms.grant?.namespace).toBe("web:https://gp2.example");
   });
 
   it("always allows a session to revoke itself, even without the Revoke method", async () => {

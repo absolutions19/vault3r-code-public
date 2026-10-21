@@ -69,7 +69,7 @@ property that protects the user's data:
 | Property | Enforced by |
 |---|---|
 | A site only ever touches **its own** namespace | `deriveOriginNamespace(origin)` — origin comes from `senderFrame`, never the page |
-| dweb origins can't collide with http(s) or with each other | `web:dweb:` prefix + case-preserving canonicalization (CIDs/tx-ids don't alias) |
+| No two different origins can share a namespace | the scheme is always part of the key + case-preserving canonicalization (CIDs/tx-ids don't alias) |
 | Explicit **consent** with **per-field** grants on first connect | `promptConsent` → persisted in `data-vault-permissions.js` |
 | Method gating, input caps, write-policy, anti-rollback store | the engine chokepoint (unchanged from the signed path) |
 | One page can't drive another's session | the **manager** binds each `sessionId` to its `webContents` |
@@ -321,9 +321,13 @@ both.
 
 `deriveOriginNamespace(origin)`:
 
-- `https://app.example.com` → `web:example.com` (the **same** namespace the relay
-  path derives — a site's data is identical across transports).
-- `bzz://…`, `ipfs://…`, `ens://myapp.eth`, `rad://…` → `web:dweb:<scheme>:<authority>`.
+**The namespace is the origin**: `web:<scheme>://<authority>`, with the scheme,
+host and port kept verbatim. One rule for every scheme, and the same boundary
+the browser already enforces for localStorage, IndexedDB and service workers.
+
+- `https://app.example.com` → `web:https://app.example.com`. A subdomain is its
+  own site, and `http://` is not `https://`.
+- `bzz://…`, `ipfs://…`, `ens://myapp.eth`, `rad://…` → `web:<scheme>://<authority>`.
   Case is preserved for content-address schemes (`ipfs`/`ipns`/`ar`/`rad`) so
   distinct CIDs never alias; folded only for name/hex schemes (`ens`/`bzz`/`swarm`/`hyper`).
 - `http://app.localhost:8765` → `web:app.localhost:8765`. **The port is part of

@@ -73,41 +73,97 @@ describe("namespace derivation", () => {
   });
 });
 
-describe("origin namespace derivation (trusted in-process host mode)", () => {
-  it("reduces http(s) origins to the same web:<registrable-domain> as the relay path", () => {
-    expect(deriveOriginNamespace("https://app.example.com").namespace).toBe("web:example.com");
-    expect(deriveOriginNamespace("https://example.com:8080").namespace).toBe("web:example.com");
+describe("origin namespace derivation (browser mode): the namespace IS the origin", () => {
+  it("keeps the scheme, the host and the port, verbatim", () => {
+    expect(deriveOriginNamespace("https://example.com").namespace).toBe("web:https://example.com");
+    expect(deriveOriginNamespace("http://example.com").namespace).toBe("web:http://example.com");
+    expect(deriveOriginNamespace("https://example.com:8080").namespace).toBe("web:https://example.com:8080");
+    expect(deriveOriginNamespace("bzz://name.eth").namespace).toBe("web:bzz://name.eth");
     // A bare origin with the URL parser's normalized root path is still accepted.
-    expect(deriveOriginNamespace("https://example.com/").namespace).toBe("web:example.com");
-    // Identical to what deriveNamespace produces for the bare host.
-    expect(deriveOriginNamespace("https://app.example.com").storageKey).toBe(
-      deriveNamespace("example.com", "registrable-domain").storageKey,
+    expect(deriveOriginNamespace("https://example.com/").namespace).toBe("web:https://example.com");
+  });
+
+  it("does NOT collapse subdomains — a staging host is not production", () => {
+    const prod = deriveOriginNamespace("https://site.example").namespace;
+    for (const sub of ["https://www.site.example", "https://app.site.example", "https://staging.site.example"]) {
+      expect(deriveOriginNamespace(sub).namespace).not.toBe(prod);
+    }
+    expect(deriveOriginNamespace("https://app.site.example").namespace).toBe("web:https://app.site.example");
+  });
+
+  it("does NOT collapse tenants of a shared host (the eTLD+1 leak)", () => {
+    // Under registrable-domain keying every one of these was ONE partition,
+    // because the suffix list calls `pages.example` a public suffix only when
+    // it happens to be listed. Two unrelated tenants shared a document.
+    expect(deriveOriginNamespace("https://alice.pages.example").namespace).not.toBe(
+      deriveOriginNamespace("https://bob.pages.example").namespace,
+    );
+    expect(deriveOriginNamespace("https://alice.github.io").namespace).not.toBe(
+      deriveOriginNamespace("https://bob.github.io").namespace,
     );
   });
-  it("honors host granularity for http(s) origins", () => {
-    expect(deriveOriginNamespace("https://tenant1.saas.com", "host").namespace).toBe("web:tenant1.saas.com");
+
+  it("separates http from https on one host", () => {
+    // An http origin is network-attackable and is not the same principal as its
+    // https twin; every other storage API in the browser agrees.
+    expect(deriveOriginNamespace("http://site.example").namespace).not.toBe(
+      deriveOriginNamespace("https://site.example").namespace,
+    );
   });
-  it("keeps the port in the namespace for *.localhost dev hosts only", () => {
-    // Two dev servers on one loopback name must not share (and race on) a partition.
-    expect(deriveOriginNamespace("http://app.localhost:8765").namespace).toBe("web:app.localhost:8765");
-    expect(deriveOriginNamespace("http://app.localhost:8766").namespace).toBe("web:app.localhost:8766");
+
+  it("separates ports without needing a loopback special case", () => {
+    expect(deriveOriginNamespace("http://app.localhost:8765").namespace).toBe("web:http://app.localhost:8765");
     expect(deriveOriginNamespace("http://app.localhost:8765").storageKey).not.toBe(
       deriveOriginNamespace("http://app.localhost:8766").storageKey,
     );
+    // A real host now keeps its port too — the old rule dropped it here and
+    // kept it only for `*.localhost`.
+    expect(deriveOriginNamespace("https://site.example:8443").namespace).not.toBe(
+      deriveOriginNamespace("https://site.example").namespace,
+    );
     // The scheme's default port is not a port: `http://app.localhost` and `:80` agree.
-    expect(deriveOriginNamespace("http://app.localhost").namespace).toBe("web:app.localhost");
-    expect(deriveOriginNamespace("http://app.localhost:80").namespace).toBe("web:app.localhost");
-    // Real origins keep the port out so the namespace survives a redeploy on a new port.
-    expect(deriveOriginNamespace("https://example.com:8080").namespace).toBe("web:example.com");
+    expect(deriveOriginNamespace("http://app.localhost:80").namespace).toBe(
+      deriveOriginNamespace("http://app.localhost").namespace,
+    );
+    expect(deriveOriginNamespace("https://site.example:443").namespace).toBe(
+      deriveOriginNamespace("https://site.example").namespace,
+    );
   });
-  it("keys decentralized-web origins on the full canonical authority under web:dweb:", () => {
-    // Case-insensitive schemes (names / hex refs) fold to lowercase.
-    expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:dweb:bzz:deadbeefcafe");
-    expect(deriveOriginNamespace("ens://MyApp.eth").namespace).toBe("web:dweb:ens:myapp.eth");
-    // Case-sensitive content-address schemes preserve case verbatim.
-    expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:dweb:ipfs:QmHash");
-    expect(deriveOriginNamespace("ar://AbC-123").namespace).toBe("web:dweb:ar:AbC-123");
+
+  it("accepts bare localhost and IP literals — only the relay needs a name", () => {
+    expect(deriveOriginNamespace("http://localhost:9999").namespace).toBe("web:http://localhost:9999");
+    expect(deriveOriginNamespace("http://127.0.0.1:9999").namespace).toBe("web:http://127.0.0.1:9999");
+    expect(deriveOriginNamespace("http://[::1]:9999").namespace).toBe("web:http://[::1]:9999");
+    // And they are distinct from each other and from a loopback name.
+    const ns = ["http://localhost:9999", "http://127.0.0.1:9999", "http://app.localhost:9999"].map(
+      (o) => deriveOriginNamespace(o).namespace,
+    );
+    expect(new Set(ns).size).toBe(3);
   });
+
+  it("keys a dweb origin on its scheme and authority, so the transport matters", () => {
+    // One name, three transports, three partitions: changing a contenthash from
+    // Swarm to IPFS moves the namespace. Documented as deployment discipline.
+    expect(deriveOriginNamespace("bzz://name.eth").namespace).toBe("web:bzz://name.eth");
+    expect(deriveOriginNamespace("ipfs://name.eth").namespace).toBe("web:ipfs://name.eth");
+    expect(
+      new Set(["bzz://name.eth", "ipfs://name.eth", "ipns://name.eth"].map((o) => deriveOriginNamespace(o).namespace))
+        .size,
+    ).toBe(3);
+    expect(deriveOriginNamespace("bzz://v2.name.eth").namespace).not.toBe(
+      deriveOriginNamespace("bzz://name.eth").namespace,
+    );
+  });
+
+  it("folds case for name schemes and preserves it for addressed ones", () => {
+    expect(deriveOriginNamespace("bzz://DeadBeefCafe").namespace).toBe("web:bzz://deadbeefcafe");
+    expect(deriveOriginNamespace("ens://MyApp.eth").namespace).toBe("web:ens://myapp.eth");
+    expect(deriveOriginNamespace("https://EXAMPLE.com").namespace).toBe("web:https://example.com");
+    // Case-sensitive content-address / key schemes preserve case verbatim.
+    expect(deriveOriginNamespace("ipfs://QmHash").namespace).toBe("web:ipfs://QmHash");
+    expect(deriveOriginNamespace("ar://AbC-123").namespace).toBe("web:ar://AbC-123");
+  });
+
   it("never aliases distinct case-sensitive dweb identifiers (isolation)", () => {
     // IPFS CIDv0 (Base58btc), Arweave (Base64URL), Radicle (Base58 z-RID) are
     // case-significant — two spellings must be two namespaces.
@@ -116,11 +172,30 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
     expect(deriveOriginNamespace("rad://z6MkAbc").namespace).not.toBe(deriveOriginNamespace("rad://z6mkabc").namespace);
     expect(deriveOriginNamespace("ipns://k51Xyz").namespace).not.toBe(deriveOriginNamespace("ipns://k51xyz").namespace);
   });
-  it("never collides a dweb namespace with an http(s) registrable domain", () => {
-    const web = deriveOriginNamespace("https://example.com").namespace;
-    const dweb = deriveOriginNamespace("ens://example.com").namespace;
-    expect(web).not.toBe(dweb);
+
+  it("cannot collide a dweb namespace with an http(s) one", () => {
+    // The scheme is always present, so no two origins share a canonical key
+    // without being the same origin. The old `web:dweb:` infix guard existed
+    // only because the http(s) form dropped its scheme.
+    const all = [
+      "https://example.com",
+      "http://example.com",
+      "ens://example.com",
+      "bzz://example.com",
+      "ipfs://example.com",
+    ].map((o) => deriveOriginNamespace(o).namespace);
+    expect(new Set(all).size).toBe(all.length);
     expect(deriveOriginNamespace("bzz://a").storageKey).not.toBe(deriveOriginNamespace("bzz://b").storageKey);
+  });
+
+  it("derives no namespace from the Public Suffix List", () => {
+    // The point of the rule: two hosts differing only below a suffix must
+    // differ, whether or not that suffix is in anyone's list. A regression here
+    // means eTLD+1 keying came back.
+    expect(deriveOriginNamespace("https://a.site.co.uk").namespace).not.toBe(
+      deriveOriginNamespace("https://b.site.co.uk").namespace,
+    );
+    expect(deriveOriginNamespace("https://site.co.uk").namespace).toBe("web:https://site.co.uk");
   });
 
   // Adversarial: a crafted URL must not smuggle non-authoritative components past
@@ -142,11 +217,13 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
       "about:blank",
       "ws://example.com",
       "chrome://settings",
+      "web3://0xabc",
+      "freedom://dapps",
     ]) {
       expect(() => deriveOriginNamespace(bad)).toThrow(NamespaceError);
     }
   });
-  it("rejects dweb origins with no real authority", () => {
+  it("rejects origins with no real authority", () => {
     expect(() => deriveOriginNamespace("bzz:opaque")).toThrow(NamespaceError);
     expect(() => deriveOriginNamespace("ipfs:")).toThrow(NamespaceError);
   });
@@ -154,10 +231,6 @@ describe("origin namespace derivation (trusted in-process host mode)", () => {
     expect(() => deriveOriginNamespace("")).toThrow(NamespaceError);
     expect(() => deriveOriginNamespace("   ")).toThrow(NamespaceError);
     expect(() => deriveOriginNamespace("not a url")).toThrow(NamespaceError);
-  });
-  it("is case-insensitive on host but preserves a single canonical key", () => {
-    expect(deriveOriginNamespace("https://EXAMPLE.com").namespace).toBe("web:example.com");
-    expect(deriveOriginNamespace("bzz://ABC").namespace).toBe(deriveOriginNamespace("bzz://abc").namespace);
   });
 });
 

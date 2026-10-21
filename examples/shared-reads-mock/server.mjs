@@ -6,10 +6,10 @@
  *   http://owner2.localhost:8799  a second, independent owner
  *   http://reader.localhost:8799  asks to read one or both owners' /shared
  *
- * The port matters. For *.localhost hosts the vault keys the partition by port
- * as well as host (`web:owner.localhost:8799`), so the origin the reader names
- * must match the one the owner was served on exactly. It is baked into the
- * pages from PORT below rather than typed in two places.
+ * The port matters: the vault's namespace IS the origin
+ * (`web:http://owner.localhost:8799`), port included, so the origin the reader
+ * names must match the one the owner was served on exactly. It is baked into
+ * the pages from PORT below rather than typed in two places.
  *
  * No dependencies. Run with: node server.mjs
  */
@@ -93,9 +93,9 @@ window.__mock = { log, fail, whenReady, OWNER_ORIGIN, OWNER2_ORIGIN, READER_ORIG
 </body>
 </html>`;
 
-const OWNER_BODY = (origin, host, label) => `
+const OWNER_BODY = (origin, label) => `
 <h1>${label} <span class="tag">publishes</span></h1>
-<div class="origin">${origin} &nbsp;→&nbsp; web:${host}:${PORT}</div>
+<div class="origin">${origin} &nbsp;→&nbsp; web:${origin}</div>
 
 <section>
   <h2>1 &middot; Connect</h2>
@@ -127,7 +127,7 @@ const OWNER_BODY = (origin, host, label) => `
 
 const READER_BODY = `
 <h1>Reader site <span class="tag">reads</span></h1>
-<div class="origin">${READER_ORIGIN} &nbsp;→&nbsp; web:reader.localhost:${PORT}</div>
+<div class="origin">${READER_ORIGIN} &nbsp;→&nbsp; web:${READER_ORIGIN}</div>
 
 <section>
   <h2>1 &middot; Connect, naming the owner</h2>
@@ -343,12 +343,12 @@ const server = http.createServer((req, res) => {
   if (site === 'owner2') {
     return send(
       'text/html; charset=utf-8',
-      SHELL('Owner 2', '#b2761f', OWNER_BODY(OWNER2_ORIGIN, 'owner2.localhost', 'Owner site 2'))
+      SHELL('Owner 2', '#b2761f', OWNER_BODY(OWNER2_ORIGIN, 'Owner site 2'))
     );
   }
   return send(
     'text/html; charset=utf-8',
-    SHELL('Owner site', '#1f9d6b', OWNER_BODY(OWNER_ORIGIN, 'owner.localhost', 'Owner site'))
+    SHELL('Owner site', '#1f9d6b', OWNER_BODY(OWNER_ORIGIN, 'Owner site'))
   );
 });
 

@@ -330,9 +330,9 @@ Two costs worth knowing before the first bug report:
 - **Residual timing channel.** An approved-but-empty owner costs a manifest load
   and a decrypt; an unapproved owner short-circuits first. Closing it fully means
   decrypting on every rejected call, which is a free DoS.
-- **Uniform-empty is undebuggable by construction.** A typo'd origin, a
-  granularity mismatch, an unticked row and a never-visited site look identical
-  to the developer. Mitigated only on the vault's own surfaces (a main-process
+- **Uniform-empty is undebuggable by construction.** A typo'd origin, a wrong
+  scheme or port, an unticked row and a never-visited site look identical to the
+  developer. Mitigated only on the vault's own surfaces (a main-process
   log line, the approved pairs in the Data pane); nothing reaches the page.
 - **No subscribe will produce polling.** A per-(reader, owner) read budget is
   the obvious next step, and an exhausted budget must return the same uniform

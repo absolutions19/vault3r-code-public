@@ -1,17 +1,35 @@
 /**
  * Namespace derivation and homograph detection.
  *
- * The namespace is derived from a verified host, never supplied by the caller.
- * We normalize to a Punycode A-label (via the WHATWG URL parser, ICU-backed),
- * reduce to the registrable domain (or keep the full host for `host`
- * granularity), and produce `web:<canonical>`. A separate storage key is the
- * SHA-256 of that string for on-disk keying.
+ * The namespace is derived from a verified host or an attested origin, never
+ * from anything the caller supplies. Hosts normalize to a Punycode A-label via
+ * the WHATWG URL parser (ICU-backed). A separate storage key is the SHA-256 of
+ * the namespace string, for on-disk keying.
  */
 
 import { getDomain, parse as tldParse } from "tldts";
 import { NS_PREFIX_WEB, type Namespace, type NamespaceGranularity } from "@vault/protocol";
+
 import { sha256 } from "./primitives.js";
 import { toHex, utf8ToBytes } from "./encoding.js";
+
+// ---------------------------------------------------------------------------
+// TWO IDENTITY MODELS, and they key differently on purpose.
+//
+// RELAY mode: a server proves who it is by serving a `.well-known` identity
+// record that declares its own domain. Ownership of a DOMAIN is what was
+// proven, so the namespace is the registrable domain (eTLD+1) and a record is
+// authoritative for the subdomains beneath it. `normalizeHost`,
+// `registrableDomain`, `isAuthoritativeForHost` and `deriveNamespace` below
+// serve that model, and they are the only reason this file needs the Public
+// Suffix List.
+//
+// BROWSER mode (`deriveOriginNamespace`): the host process reads the caller's
+// origin off the sender frame. Nothing was proven about a domain — the browser
+// simply knows which origin it loaded — so the namespace IS the origin, the
+// same boundary Chromium already enforces for localStorage, IndexedDB and
+// service workers. No suffix list, no granularity, no per-scheme exceptions.
+// ---------------------------------------------------------------------------
 
 export class NamespaceError extends Error {
   constructor(message: string) {
@@ -49,12 +67,6 @@ export function normalizeHost(input: string): string {
     );
   }
   return hostname;
-}
-
-/** `localhost` or any `*.localhost` name — reserved for loopback by RFC 6761. */
-export function isLoopbackName(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/\.+$/, "");
-  return h === "localhost" || h.endsWith(".localhost");
 }
 
 /** The registrable domain (eTLD+1) of a host, or null if not derivable. */
@@ -141,29 +153,40 @@ export const DWEB_SCHEMES: ReadonlySet<string> = new Set([
 const CASE_INSENSITIVE_DWEB_SCHEMES: ReadonlySet<string> = new Set(["ens", "bzz", "swarm", "hyper"]);
 
 /**
- * Derive a namespace from an *origin*, for the trusted in-process host path
- * (browser Option B) where the caller's origin is supplied authoritatively by
- * the host process rather than proven over the relay.
+ * Derive a namespace from an *origin*: the browser path, where the host process
+ * supplies the caller's origin authoritatively from the sender frame.
+ *
+ * **The namespace is the origin — scheme, host and port, verbatim.** One rule
+ * for every scheme, and deliberately the same boundary the browser already
+ * enforces for localStorage, IndexedDB, cookies and service workers, so a site
+ * author needs no vault-specific model of what "a site" means.
+ *
+ * What that means in practice, and why each is right rather than merely simple:
+ *
+ * - `http://site.example` and `https://site.example` are TWO partitions. An
+ *   `http` origin is network-attackable and is not the same security principal
+ *   as its `https` twin; every other storage API agrees.
+ * - `site.example` and `app.site.example` are TWO partitions. Sharing across
+ *   subdomains is what `/shared` plus consent is for; collapsing them silently
+ *   lets a staging subdomain read and write production's document.
+ * - `alice.pages.example` and `bob.pages.example` are TWO partitions. Under
+ *   eTLD+1 keying every tenant of a shared host collapsed into one, which is a
+ *   cross-tenant data leak that no amount of suffix-list tuning can make safe.
+ * - A port is part of an origin, so two dev servers on one loopback name differ
+ *   without needing a loopback special case — and `http://localhost:8765` and
+ *   `http://127.0.0.1:8765` are perfectly good origins. Only the relay's model
+ *   needs a provable *name*.
  *
  * The input must be an origin — `scheme://host[:port]` — not a full URL: any
- * userinfo, path, query, or fragment is rejected so two different display URLs
- * for the same site cannot be steered to different (or, worse, to *another*
- * site's) namespace. The scheme must be `http(s)` or a whitelisted dweb scheme.
+ * userinfo, path, query or fragment is rejected so two different display URLs
+ * for one site cannot be steered to different (or, worse, to *another* site's)
+ * namespace. The scheme must be `http(s)` or a whitelisted dweb scheme.
  *
- * - `http(s)` origins reduce to the SAME `web:<registrable-domain>` namespace the
- *   relay path derives, so a site's data is identical whether it connects through
- *   the browser or over the network. Only the registrable domain of the host is
- *   used; port and (rejected) path never affect the result.
- * - Dweb origins (`bzz://`, `ipfs://`, `ipns://`, `hyper://`, `ens://`, `rad://`, …)
- *   have no DNS registrable domain, so they key on the full canonical
- *   `<scheme>:<authority>` under a `web:dweb:` prefix. The `dweb:` infix carries a
- *   colon, which an eTLD+1 never can, so a dweb namespace can never collide with an
- *   http(s) one.
+ * Case folds for the schemes whose authority is definitionally
+ * case-insensitive; content- and key-addressed authorities keep their exact
+ * case so distinct identifiers never alias.
  */
-export function deriveOriginNamespace(
-  origin: string,
-  granularity: NamespaceGranularity = "registrable-domain",
-): DerivedNamespace {
+export function deriveOriginNamespace(origin: string): DerivedNamespace {
   if (typeof origin !== "string" || origin.trim().length === 0) {
     throw new NamespaceError("empty origin");
   }
@@ -187,32 +210,21 @@ export function deriveOriginNamespace(
   }
 
   const scheme = url.protocol.replace(/:$/, "").toLowerCase();
-  if (scheme === "http" || scheme === "https") {
-    const derived = deriveNamespace(url.hostname, granularity);
-    // RFC 6761 loopback names (`*.localhost`) are development hosts: several
-    // servers routinely share one hostname and differ only by port, and two dev
-    // servers must not share — and race on — one partition. The port is part of
-    // the key for those hosts only; a real origin keeps it out so its namespace
-    // stays stable across deployments. `url.port` is empty for a scheme's
-    // default port, so `http://app.localhost` and `:80` still agree.
-    if (url.port.length > 0 && isLoopbackName(url.hostname)) {
-      const canonicalKey = `${derived.canonicalKey}:${url.port}`;
-      const namespace = `${NS_PREFIX_WEB}:${canonicalKey}` as Namespace;
-      return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
-    }
-    return derived;
+  if (scheme !== "http" && scheme !== "https" && !DWEB_SCHEMES.has(scheme)) {
+    throw new NamespaceError(`unsupported origin scheme: ${scheme}`);
   }
-  if (!DWEB_SCHEMES.has(scheme)) throw new NamespaceError(`unsupported origin scheme: ${scheme}`);
-  // A dweb origin must have a real scheme-relative authority (`scheme://authority`);
-  // opaque forms with no authority are ambiguous and rejected. The WHATWG URL
-  // parser preserves case for non-special (dweb) authorities, so we only fold the
-  // schemes that are definitionally case-insensitive — content-address / key
-  // schemes keep their exact case so distinct identifiers never alias.
+  // An origin needs a real scheme-relative authority (`scheme://authority`);
+  // opaque forms with none are ambiguous and rejected. `url.host` carries the
+  // port when there is one, and is empty for a scheme's default port — so
+  // `http://app.localhost` and `:80` agree, as they should.
   const rawAuthority = url.host;
-  if (rawAuthority.length === 0) throw new NamespaceError(`dweb origin has no authority: ${origin}`);
+  if (rawAuthority.length === 0) throw new NamespaceError(`origin has no authority: ${origin}`);
+  // The WHATWG URL parser already lowercases a special (http/https) hostname;
+  // it preserves case for non-special dweb authorities, so fold only the
+  // schemes that are definitionally case-insensitive.
   const authority = CASE_INSENSITIVE_DWEB_SCHEMES.has(scheme) ? rawAuthority.toLowerCase() : rawAuthority;
-  const canonicalKey = `${scheme}:${authority}`;
-  const namespace = `${NS_PREFIX_WEB}:dweb:${canonicalKey}` as Namespace;
+  const canonicalKey = `${scheme}://${authority}`;
+  const namespace = `${NS_PREFIX_WEB}:${canonicalKey}` as Namespace;
   return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
 }
 

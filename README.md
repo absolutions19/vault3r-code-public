@@ -410,8 +410,10 @@ await window.vault.request({
 
 - **Isolation** comes from the transport itself: the main process knows the caller's
   origin authoritatively, so a site's namespace is not something it can influence.
-  dweb origins (`ipfs://`, `ens://`, `bzz://`, …) get a `web:dweb:` prefix with
-  case-preserving canonicalization, so distinct CIDs never alias.
+  The namespace **is** that origin — `web:<scheme>://<authority>`, scheme, host and
+  port verbatim — which is the boundary the browser already enforces for
+  localStorage and IndexedDB. Case is preserved for content-address schemes
+  (`ipfs`/`ipns`/`ar`/`rad`) so distinct CIDs never alias.
 - **Consent** is explicit and per-field on first connect, persisted per origin so a
   returning site reconnects silently; revoking in the Data tab tears down live
   sessions and drops the grant.

@@ -44,7 +44,6 @@ import {
   type PermissionsChangedNotification,
   type AppMetadata,
   type RequestedScope,
-  type NamespaceGranularity,
   type IdentityVerification,
   type FieldRule,
   type ForeignReadGrant,
@@ -56,7 +55,14 @@ import {
   makeFailure,
 } from "@vault/protocol";
 import type { ChangeDescriptor, TypedData } from "@vault/protocol";
-import { deriveNamespace, deriveOriginNamespace, hashJsonValue, randomBytes, toBase64Url, utf8ToBytes } from "@vault/crypto-core";
+import {
+  deriveOriginNamespace,
+  hashJsonValue,
+  randomBytes,
+  storageKeyForNamespace,
+  toBase64Url,
+  utf8ToBytes,
+} from "@vault/crypto-core";
 import { verifyTyped } from "@vault/crypto-core";
 import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, RevocationChecker, StorageAdapter } from "./adapters.js";
 import { systemClock } from "./adapters.js";
@@ -102,8 +108,6 @@ export interface LocalConnectInput {
   origin: string;
   appMetadata: AppMetadata;
   requestedScopes: RequestedScope[];
-  /** http(s) namespace granularity; ignored for dweb origins. Default registrable-domain. */
-  granularity?: NamespaceGranularity;
 }
 
 export interface LocalConnectResult {
@@ -287,7 +291,6 @@ export class VaultEngine {
     const grantedMethods = decision.grantedMethods ?? requested.methods;
     const grantedFields = normalizeFields(decision.grantedFields ?? requested.fields);
     const writePolicy = decision.writePolicy ?? "ask-once-per-session";
-    const derived = deriveNamespace(verified.canonicalHost, verified.verification.granularity ?? "registrable-domain");
     const expiresAt = now + this.sessionTtlMs;
     const grantId = this.randomId();
 
@@ -314,7 +317,9 @@ export class VaultEngine {
     const session: Session = {
       id: sessionId,
       namespace: verified.verification.namespace,
-      storageKey: derived.storageKey,
+      // From the namespace the verification derived, not a second derivation of
+      // its own: two derivations of one value are two chances to disagree.
+      storageKey: storageKeyForNamespace(verified.verification.namespace),
       grant,
       foreignReads: new Map(),
       delegatedKeyPub: verified.delegatedKeyPub,
@@ -741,8 +746,7 @@ export class VaultEngine {
   /** Trusted connect: derive namespace from the host-attested origin, take consent, mint a session. */
   async connectLocal(input: LocalConnectInput): Promise<LocalConnectResult> {
     const now = this.clock.now();
-    const granularity = input.granularity ?? "registrable-domain";
-    const derived = deriveOriginNamespace(input.origin, granularity);
+    const derived = deriveOriginNamespace(input.origin);
 
     // No identity record exists in trusted mode, so every requested method is
     // eligible; the user still gates it at the consent prompt below.
@@ -756,7 +760,10 @@ export class VaultEngine {
       tier: "verified",
       namespace: derived.namespace,
       domain: input.origin,
-      granularity,
+      // Granularity is a relay concept: it says how much of a PROVEN domain the
+      // namespace keeps. Here the namespace is the origin itself, so there is
+      // nothing to choose.
+      granularity: null,
       identityKid: null,
       homographFlag: false,
       allowedMethods: requestedMethods,
@@ -854,10 +861,6 @@ export class VaultEngine {
    * Resolve a connect's declared cross-origin reads. THE single derivation site:
    * neither the host, nor the consent UI, nor the page ever turns an origin into
    * a namespace, so every rule `deriveOriginNamespace` enforces applies here too.
-   *
-   * Always derived at the default granularity, never `input.granularity`: the
-   * reader's choice governs where the READER's own partition lives and must not
-   * steer which partition its cross-origin reads point at.
    */
   private resolveForeignRequests(scopes: RequestedScope[], ownNamespace: string): ForeignReadEntry[] {
     const rules = scopes.flatMap((s) => s.foreign ?? []);

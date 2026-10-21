@@ -15,11 +15,12 @@ No dependencies, no build:
 pnpm serve:shared-reads          # or: node examples/shared-reads-mock/server.mjs
 ```
 
-The **host matters**. Namespaces are derived from the origin including scheme,
-and `*.localhost` names are keyed by port as well, so these are three separate
-partitions — `web:owner.localhost:8799`, `web:owner2.localhost:8799`,
-`web:reader.localhost:8799`. Chromium resolves any `*.localhost` name to
-loopback, so nothing needs a hosts-file entry.
+The **origin matters**, because the namespace is the origin: these are three
+separate partitions — `web:http://owner.localhost:8799`,
+`web:http://owner2.localhost:8799`, `web:http://reader.localhost:8799`. The port
+is part of an origin, so serving this on another port gives you three fresh
+partitions. Chromium resolves any `*.localhost` name to loopback, so nothing
+needs a hosts-file entry.
 
 ## The order that matters
 
