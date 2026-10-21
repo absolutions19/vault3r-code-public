@@ -62,9 +62,17 @@ import {
   storageKeyForNamespace,
   toBase64Url,
   utf8ToBytes,
-} from "@vault/crypto-core";
-import { verifyTyped } from "@vault/crypto-core";
-import type { Clock, ConsentAdapter, IdentityResolver, KeystoreAdapter, RevocationChecker, StorageAdapter } from "./adapters.js";
+} from "@vault/crypto-core/browser";
+import { verifyTyped } from "@vault/crypto-core/browser";
+import type {
+  Clock,
+  ConsentAdapter,
+  IdentityResolver,
+  KeystoreAdapter,
+  ProposalVerifier,
+  RevocationChecker,
+  StorageAdapter,
+} from "./adapters.js";
 import { systemClock } from "./adapters.js";
 import { DocumentStore, versionToEtag, etagToVersion } from "./document-store.js";
 import {
@@ -80,13 +88,19 @@ import {
 import { parsePointer, pointerGet, pointerRemove, pointerSet, withinDepth, type Json } from "./json-pointer.js";
 import { ReplayGuard } from "./replay.js";
 import { SessionStore, type ForeignReadEntry, type Session } from "./session.js";
-import { verifyProposal } from "./identity-verify.js";
 
 export interface VaultEngineConfig {
   keystore: KeystoreAdapter;
   storage: StorageAdapter;
   resolver: IdentityResolver;
   consent: ConsentAdapter;
+  /**
+   * Verifies a signed connection proposal. Required to serve `connect`; a host
+   * that serves only the browser plane (`connectLocal`) leaves it unset, which
+   * keeps the relay's verification pipeline — and the Public Suffix List it
+   * needs — out of that host's bundle entirely.
+   */
+  verifier?: ProposalVerifier;
   /** Optional short-TTL key-revocation checker (record.statusEndpoint). */
   revocation?: RevocationChecker;
   /** How often to re-check revocation on the data plane (ms). Default 60s. */
@@ -180,6 +194,7 @@ export class VaultEngine {
   private readonly keystore: KeystoreAdapter;
   private readonly resolver: IdentityResolver;
   private readonly consent: ConsentAdapter;
+  private readonly verifier: ProposalVerifier | undefined;
   private readonly revocation: RevocationChecker | undefined;
   private readonly revocationRecheckMs: number;
   private readonly clock: Clock;
@@ -195,6 +210,7 @@ export class VaultEngine {
     this.keystore = config.keystore;
     this.resolver = config.resolver;
     this.consent = config.consent;
+    this.verifier = config.verifier;
     this.revocation = config.revocation;
     this.revocationRecheckMs = config.revocationRecheckMs ?? 60_000;
     this.clock = config.clock ?? systemClock;
@@ -258,7 +274,18 @@ export class VaultEngine {
   async connect(params: SessionProposeParams, ctx: ProposeContext): Promise<SessionSettleResult> {
     const now = this.clock.now();
 
-    const verified = await verifyProposal(params, {
+    // Fail CLOSED: without a verifier nothing has checked the claimed domain,
+    // the identity record, the delegation or the proof of possession, so there
+    // is no identity to consent to. A host that does not wire one is declaring
+    // it does not serve the signed plane; refusing is the only safe reading.
+    if (!this.verifier) {
+      throw VaultError.of(
+        "IdentityUnverified",
+        "this vault does not serve signed connections: no proposal verifier is configured",
+      );
+    }
+
+    const verified = await this.verifier(params, {
       resolver: this.resolver,
       ...(this.revocation ? { revocation: this.revocation } : {}),
       vaultId: this.keystore.vaultId(),

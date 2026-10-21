@@ -7,7 +7,15 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RelayServer } from "@vault/relay";
-import { VaultEngine, VaultNode, InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent } from "@vault/vault-core";
+import {
+  VaultEngine,
+  VaultNode,
+  InMemoryKeystore,
+  InMemoryStorage,
+  StaticIdentityResolver,
+  AutoConsent,
+  verifyProposal,
+} from "@vault/vault-core";
 import { VaultClient, RelayTransport, LocalDelegationSigner } from "@vault/sdk";
 import { ed25519Generate, signIdentityRecord, toBase64Url } from "@vault/crypto-core";
 import { PROTOCOL_VERSION, ErrorCode, type RequestedScope, type VaultIdentityRecord } from "@vault/protocol";
@@ -70,6 +78,7 @@ describe("VAULT end-to-end over the relay", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
     });
     node = new VaultNode(engine, new RelayTransport(relayUrl));
   });

@@ -4,6 +4,15 @@
  * CommonJS main process, and write them under
  *   <freedom-browser>/src/main/vault/vendor/
  *
+ * Both packages are bundled from their `browser.ts` entry, not their index:
+ * Freedom uses only the BROWSER identity model, where the namespace is the
+ * caller's origin read off the sender frame. The relay model's verification
+ * pipeline, `.well-known` resolver and transport runtime are left out, and with
+ * them the Public Suffix List (tldts, ~170 KB of trie data) that only that model
+ * consults. Narrowing the entry is what drops it: tldts ships CommonJS without
+ * `sideEffects: false`, so esbuild cannot tree-shake it out of any module that
+ * stays reachable.
+ *
  * Usage (from this repo root):
  *   node tools/bundle-for-freedom.mjs [path-to-freedom-browser]
  *
@@ -24,9 +33,10 @@ const OUT = path.join(FREEDOM, 'src', 'main', 'vault', 'vendor');
  * The revision this bundle was built from, stamped into the banner.
  *
  * Nothing else in the generated file says which engine it is: without this a
- * reader of `freedom-browser` has 433 KB of code, no version, and no way back
- * to the source — which an MPL-2.0 bundle has to be traceable to. `+local`
- * marks a bundle built over uncommitted work, so an untraceable one says so.
+ * reader of `freedom-browser` has a quarter-megabyte of code, no version, and
+ * no way back to the source — which an MPL-2.0 bundle has to be traceable to.
+ * `+local` marks a bundle built over uncommitted work, so an untraceable one
+ * says so.
  */
 function sourceRevision() {
   try {
@@ -47,8 +57,8 @@ const BANNER = [
   ` * Revision: ${sourceRevision()}`,
   ' * License:  MPL-2.0 (same as Freedom Browser)',
   ' * Inlines:  @noble/ciphers, @noble/curves, @noble/hashes, @scure/base,',
-  ' *           @scure/bip39, tldts — all MIT. See the vendor README beside',
-  ' *           this file, and NOTICES in the Freedom repo.',
+  ' *           @scure/bip39 — all MIT. See the vendor README beside this',
+  ' *           file, and NOTICES in the Freedom repo.',
   ' * Rebuild:  node tools/bundle-for-freedom.mjs <path-to-freedom-browser>',
   ' */',
 ].join('\n');
@@ -66,8 +76,8 @@ fs.writeFileSync(
   entry,
   `
 module.exports = {
-  vaultCore: require(${JSON.stringify(path.join(ROOT, 'packages/vault-core/src/index.ts'))}),
-  cryptoCore: require(${JSON.stringify(path.join(ROOT, 'packages/crypto-core/src/index.ts'))}),
+  vaultCore: require(${JSON.stringify(path.join(ROOT, 'packages/vault-core/src/browser.ts'))}),
+  cryptoCore: require(${JSON.stringify(path.join(ROOT, 'packages/crypto-core/src/browser.ts'))}),
 };
 `,
 );
@@ -79,7 +89,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node18',
-  // Keep Node builtins external; everything else (noble, tldts, …) goes in.
+  // Keep Node builtins external; everything else (the @noble/@scure set) goes in.
   packages: 'bundle',
   logLevel: 'info',
   banner: { js: BANNER },
@@ -89,11 +99,11 @@ fs.unlinkSync(entry);
 
 fs.writeFileSync(
   path.join(OUT, 'vault-core.js'),
-  "/* Shim: the bundled @vault/vault-core surface. */\nmodule.exports = require('./vault-bundle.js').vaultCore;\n",
+  "/* Shim: the bundled @vault/vault-core browser surface. */\nmodule.exports = require('./vault-bundle.js').vaultCore;\n",
 );
 fs.writeFileSync(
   path.join(OUT, 'crypto-core.js'),
-  "/* Shim: the bundled @vault/crypto-core surface. */\nmodule.exports = require('./vault-bundle.js').cryptoCore;\n",
+  "/* Shim: the bundled @vault/crypto-core browser surface. */\nmodule.exports = require('./vault-bundle.js').cryptoCore;\n",
 );
 
 console.log(`Wrote vendor bundle → ${OUT}`);

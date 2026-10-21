@@ -8,16 +8,18 @@ import {
   verifyDelegation,
 } from "./identity.js";
 import {
-  deriveNamespace,
   deriveOriginNamespace,
-  normalizeHost,
-  registrableDomain,
-  isAuthoritativeForHost,
   detectHomograph,
   isMixedScript,
   confusableSkeleton,
   NamespaceError,
 } from "./namespace.js";
+import {
+  deriveNamespace,
+  normalizeHost,
+  registrableDomain,
+  isAuthoritativeForHost,
+} from "./namespace-psl.js";
 import type { SessionDelegation, VaultIdentityRecord } from "@vault/protocol";
 
 const domainKey = ed25519Generate();

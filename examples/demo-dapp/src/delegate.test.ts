@@ -4,7 +4,15 @@ import { DelegateService } from "./delegate-service.js";
 import { createDelegateServer } from "./http-server.js";
 import { ed25519Generate, ed25519Sign, toBase64Url, utf8ToBytes, verifyDelegation } from "@vault/crypto-core";
 import { RelayServer } from "@vault/relay";
-import { VaultEngine, VaultNode, InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent } from "@vault/vault-core";
+import {
+  VaultEngine,
+  VaultNode,
+  InMemoryKeystore,
+  InMemoryStorage,
+  StaticIdentityResolver,
+  AutoConsent,
+  verifyProposal,
+} from "@vault/vault-core";
 import { VaultClient, RelayTransport, HttpDelegationSigner } from "@vault/sdk";
 import type { MintRequest } from "./delegate-service.js";
 
@@ -138,6 +146,7 @@ describe("Full stack with the HTTP delegation backend + PoP", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
     });
     const node = new VaultNode(engine, new RelayTransport(`ws://127.0.0.1:${relayPort}`));
 

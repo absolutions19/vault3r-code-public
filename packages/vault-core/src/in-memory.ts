@@ -16,7 +16,7 @@ import {
   concatBytes,
   utf8ToBytes,
   type RawKeyPair,
-} from "@vault/crypto-core";
+} from "@vault/crypto-core/browser";
 import type { Base64Url, VaultIdentityRecord } from "@vault/protocol";
 import { VaultError } from "@vault/protocol";
 import type {

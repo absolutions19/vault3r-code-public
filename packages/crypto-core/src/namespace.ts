@@ -1,28 +1,18 @@
 /**
- * Namespace derivation and homograph detection.
+ * Namespace derivation for the BROWSER identity model, plus homograph detection.
  *
- * The namespace is derived from a verified host or an attested origin, never
- * from anything the caller supplies. Hosts normalize to a Punycode A-label via
- * the WHATWG URL parser (ICU-backed). A separate storage key is the SHA-256 of
- * the namespace string, for on-disk keying.
+ * The namespace is derived from an attested origin, never from anything the
+ * caller supplies. A separate storage key is the SHA-256 of the namespace
+ * string, for on-disk keying.
+ *
+ * The RELAY model's host-and-suffix-list derivation lives in `namespace-psl.ts`.
+ * Nothing in this file consults the Public Suffix List, which is what lets a
+ * browser host bundle the vault without ~170 KB of trie data it never reads.
  */
 
-import { getDomain, parse as tldParse } from "tldts";
-import { NS_PREFIX_WEB, type Namespace, type NamespaceGranularity } from "@vault/protocol";
-
-import { sha256 } from "./primitives.js";
-import { toHex, utf8ToBytes } from "./encoding.js";
-
 // ---------------------------------------------------------------------------
-// TWO IDENTITY MODELS, and they key differently on purpose.
-//
-// RELAY mode: a server proves who it is by serving a `.well-known` identity
-// record that declares its own domain. Ownership of a DOMAIN is what was
-// proven, so the namespace is the registrable domain (eTLD+1) and a record is
-// authoritative for the subdomains beneath it. `normalizeHost`,
-// `registrableDomain`, `isAuthoritativeForHost` and `deriveNamespace` below
-// serve that model, and they are the only reason this file needs the Public
-// Suffix List.
+// TWO IDENTITY MODELS, and they key differently on purpose. This file is the
+// BROWSER half; the RELAY half is `namespace-psl.ts`.
 //
 // BROWSER mode (`deriveOriginNamespace`): the host process reads the caller's
 // origin off the sender frame. Nothing was proven about a domain — the browser
@@ -31,70 +21,16 @@ import { toHex, utf8ToBytes } from "./encoding.js";
 // service workers. No suffix list, no granularity, no per-scheme exceptions.
 // ---------------------------------------------------------------------------
 
+import { NS_PREFIX_WEB, type Namespace } from "@vault/protocol";
+
+import { sha256 } from "./primitives.js";
+import { toHex, utf8ToBytes } from "./encoding.js";
+
 export class NamespaceError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "NamespaceError";
   }
-}
-
-/** Normalize a host to a lowercase Punycode A-label; reject IPs and junk. */
-export function normalizeHost(input: string): string {
-  const raw = input.trim().toLowerCase().replace(/\.+$/, "");
-  if (raw.length === 0) throw new NamespaceError("empty host");
-  let hostname: string;
-  try {
-    hostname = new URL(`https://${raw}`).hostname;
-  } catch {
-    throw new NamespaceError(`invalid host: ${input}`);
-  }
-  const info = tldParse(hostname);
-  // These three are the first thing a developer serving on 127.0.0.1 or bare
-  // localhost hits, so each says what to do instead of only what is wrong.
-  if (info.isIp) {
-    throw new NamespaceError(
-      "IP literals are not valid identities — serve on a name instead, e.g. http://app.localhost:9999",
-    );
-  }
-  if (!hostname.includes(".")) {
-    throw new NamespaceError(
-      `host must be a fully-qualified domain — use a name like app.${hostname} (any *.localhost name resolves to loopback)`,
-    );
-  }
-  if (hostname === "localhost") {
-    throw new NamespaceError(
-      "localhost is not a valid identity — use a subdomain of it, e.g. http://app.localhost:9999",
-    );
-  }
-  return hostname;
-}
-
-/** The registrable domain (eTLD+1) of a host, or null if not derivable. */
-export function registrableDomain(host: string): string | null {
-  return getDomain(host);
-}
-
-/**
- * Whether an identity record's self-declared `domain` is authoritative for a host
- * the vault fetched the record from. True iff the host equals the record domain,
- * or both reduce to the SAME registrable domain (eTLD+1) using the Public Suffix
- * List — so `example.com` is authoritative for `app.example.com`, but
- * `attacker.co.uk` is NOT authoritative for `victim.co.uk` (distinct eTLD+1s,
- * which a naive "last two labels" check would wrongly accept).
- */
-export function isAuthoritativeForHost(recordDomain: string, host: string): boolean {
-  let normRecord: string;
-  let normHost: string;
-  try {
-    normRecord = normalizeHost(recordDomain);
-    normHost = normalizeHost(host);
-  } catch {
-    return false;
-  }
-  if (normRecord === normHost) return true;
-  const rd = registrableDomain(normRecord);
-  const hd = registrableDomain(normHost);
-  return rd !== null && rd === hd;
 }
 
 export interface DerivedNamespace {
@@ -106,21 +42,6 @@ export interface DerivedNamespace {
 /** The on-disk key for a namespace: hex SHA-256 of the namespace string. */
 export function storageKeyForNamespace(namespace: string): string {
   return toHex(sha256(utf8ToBytes(namespace)));
-}
-
-/** Derive the namespace for a verified host at the given granularity. */
-export function deriveNamespace(host: string, granularity: NamespaceGranularity): DerivedNamespace {
-  const canonicalHost = normalizeHost(host);
-  let canonicalKey: string;
-  if (granularity === "host") {
-    canonicalKey = canonicalHost;
-  } else {
-    const reg = registrableDomain(canonicalHost);
-    if (!reg) throw new NamespaceError(`no registrable domain for ${canonicalHost}`);
-    canonicalKey = reg;
-  }
-  const namespace = `${NS_PREFIX_WEB}:${canonicalKey}` as Namespace;
-  return { namespace, canonicalKey, storageKey: storageKeyForNamespace(namespace) };
 }
 
 /**

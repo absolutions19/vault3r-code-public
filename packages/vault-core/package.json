@@ -6,7 +6,8 @@
   "type": "module",
   "description": "VAULT engine (platform-agnostic): identity verification pipeline, namespace derivation, permission grant store, request chokepoint, session state machine, and keystore/storage adapter interfaces with in-memory implementations.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts"
   },
   "types": "./src/index.ts",
   "main": "./src/index.ts",

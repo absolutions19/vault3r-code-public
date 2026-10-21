@@ -4,6 +4,7 @@ export * from "./xchacha.js";
 export * from "./handshake.js";
 export * from "./session-envelope.js";
 export * from "./namespace.js";
+export * from "./namespace-psl.js";
 export * from "./identity.js";
 export * from "./signing.js";
 export * from "./value-hash.js";

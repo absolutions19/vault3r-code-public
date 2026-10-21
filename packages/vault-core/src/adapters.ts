@@ -127,3 +127,23 @@ export interface Clock {
 }
 
 export const systemClock: Clock = { now: () => Date.now() };
+
+/**
+ * Verifies a signed connection proposal — the relay identity model's
+ * anti-spoofing pipeline, supplied rather than imported.
+ *
+ * `verifyProposal` in `identity-verify.js` is the real implementation, and the
+ * relay wiring passes it. It is injected for the same reason the resolver and
+ * the consent surface are: the engine should not depend on a transport it may
+ * not be serving. Concretely, it also keeps the Public Suffix List out of a
+ * browser host's bundle — the verification pipeline needs host-and-suffix-list
+ * derivation, and a static import of it would drag ~170 KB of trie data into a
+ * host that only ever reads origins off its own sender frames.
+ *
+ * A host that supplies none cannot serve `connect` (the signed plane) and fails
+ * closed there; `connectLocal` (the browser plane) never consults a verifier.
+ */
+export type ProposalVerifier = (
+  params: import("@vault/protocol").SessionProposeParams,
+  ctx: import("./identity-verify.js").VerifyContext,
+) => Promise<import("./identity-verify.js").VerifiedConnection>;

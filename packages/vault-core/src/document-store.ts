@@ -7,7 +7,7 @@
  * expects (deletion). The manifest itself is AEAD-sealed, so it cannot be forged.
  */
 
-import { utf8ToBytes, bytesToUtf8, sha256, toHex } from "@vault/crypto-core";
+import { utf8ToBytes, bytesToUtf8, sha256, toHex } from "@vault/crypto-core/browser";
 import { VaultError } from "@vault/protocol";
 import type { KeystoreAdapter, StorageAdapter } from "./adapters.js";
 import type { Json } from "./json-pointer.js";

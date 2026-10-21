@@ -22,7 +22,15 @@ import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import { ed25519Generate } from "@vault/crypto-core";
 import { RelayServer } from "@vault/relay";
-import { VaultEngine, VaultNode, InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent } from "@vault/vault-core";
+import {
+  VaultEngine,
+  VaultNode,
+  InMemoryKeystore,
+  InMemoryStorage,
+  StaticIdentityResolver,
+  AutoConsent,
+  verifyProposal,
+} from "@vault/vault-core";
 import { RelayTransport } from "@vault/sdk";
 import { DelegateService, type MintRequest } from "./src/delegate-service.js";
 
@@ -101,6 +109,7 @@ export async function startDemo(opts: { httpPort?: number; relayPort?: number } 
     storage: new InMemoryStorage(),
     resolver,
     consent: new AutoConsent(),
+    verifier: verifyProposal,
   });
   const node = new VaultNode(engine, new RelayTransport(`ws://127.0.0.1:${relayPort}`));
 

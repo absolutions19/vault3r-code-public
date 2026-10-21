@@ -28,6 +28,7 @@ import {
   MAX_NAMESPACE_BYTES,
 } from "@vault/protocol";
 import { VaultEngine } from "./engine.js";
+import { verifyProposal } from "./identity-verify.js";
 import { InMemoryKeystore, InMemoryStorage, StaticIdentityResolver, AutoConsent, StaticRevocationChecker } from "./in-memory.js";
 
 const FIXED_NOW = 1_760_000_000_000;
@@ -213,7 +214,7 @@ class TestClient {
 }
 
 function newEngine(resolver: StaticIdentityResolver, keystore = new InMemoryKeystore({ vaultId: "vault-under-test" })) {
-  return new VaultEngine({ keystore, storage: new InMemoryStorage(), resolver, consent: new AutoConsent(), clock });
+  return new VaultEngine({ keystore, storage: new InMemoryStorage(), resolver, consent: new AutoConsent(), verifier: verifyProposal, clock });
 }
 
 describe("VaultEngine — connection + data plane", () => {
@@ -422,6 +423,7 @@ describe("VaultEngine — session extension caps", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       clock: { now: () => t },
     });
     const { sessionId } = await engine.connect(alice.proposal().params, alice.proposal().ctx);
@@ -623,6 +625,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       // no revocation checker
       clock,
     });
@@ -638,6 +641,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation,
       clock,
     });
@@ -653,6 +657,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation,
       clock,
     });
@@ -667,6 +672,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation: { isRevoked: async () => { throw new Error("status endpoint unreachable"); } },
       clock,
     });
@@ -682,6 +688,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation,
       revocationRecheckMs: 0, // re-check every request
       clock,
@@ -711,6 +718,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation: flaky,
       revocationRecheckMs: 0,
       clock,
@@ -730,6 +738,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       revocation,
       revocationRecheckMs: 60_000, // NOT re-checked on normal cadence within the test window
       clock,
@@ -755,6 +764,7 @@ describe("VaultEngine — key revocation", () => {
       storage: new InMemoryStorage(),
       resolver,
       consent: new AutoConsent(),
+      verifier: verifyProposal,
       clock,
     });
     // A retired key may not mint new authority — connect must fail.
@@ -794,5 +804,67 @@ describe("VaultEngine — biometric gating", () => {
     await engine.handleRequest(sessionId, alice.getData(sessionId, ["/secret/token"]));
     const reasons = authSpy.mock.calls.map((c) => c[0].reason);
     expect(reasons).toContain("sensitive-read");
+  });
+});
+
+describe("VaultEngine — signed plane without a verifier", () => {
+  // The verification pipeline is injected, not imported, so a host that serves
+  // only the browser plane never pulls it (or the Public Suffix List it needs)
+  // into its bundle. The cost of that is a host which forgets to wire it, and
+  // the only safe reading of a signed connect with nothing to verify it is to
+  // refuse: nothing has checked the claimed domain, the identity record, the
+  // delegation or the proof of possession, so there is no identity to consent to.
+  function unverifiedEngine(resolver: StaticIdentityResolver, consent: AutoConsent) {
+    return new VaultEngine({
+      keystore: new InMemoryKeystore({ vaultId: "vault-under-test" }),
+      storage: new InMemoryStorage(),
+      resolver,
+      consent,
+      // no verifier — deliberately
+      clock,
+    });
+  }
+
+  it("FAILS CLOSED on a signed connect, naming the missing verifier", async () => {
+    const resolver = new StaticIdentityResolver();
+    const alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    resolver.set(alice.record);
+    const engine = unverifiedEngine(resolver, new AutoConsent());
+
+    await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+      message: expect.stringContaining("no proposal verifier is configured"),
+    });
+  });
+
+  it("refuses before asking the user, so a missing verifier cannot be consented past", async () => {
+    const resolver = new StaticIdentityResolver();
+    const alice = new TestClient("example.com", "vault-under-test", [{ path: "/profile", read: true, write: true }]);
+    resolver.set(alice.record);
+    const consentSpy = vi.fn(() => ({ approved: true }));
+    const engine = unverifiedEngine(resolver, new AutoConsent(consentSpy));
+
+    await expect(engine.connect(alice.proposal().params, alice.proposal().ctx)).rejects.toMatchObject({
+      code: ErrorCode.IdentityUnverified,
+    });
+    // An approving consent adapter must not be able to turn this into a session:
+    // the refusal happens before the user is ever shown a prompt.
+    expect(consentSpy).not.toHaveBeenCalled();
+    expect(engine.listConnections()).toHaveLength(0);
+  });
+
+  it("still serves the browser plane, which never consults a verifier", async () => {
+    const resolver = new StaticIdentityResolver();
+    const engine = unverifiedEngine(resolver, new AutoConsent());
+
+    const local = await engine.connectLocal({
+      origin: "https://app.example.com",
+      appMetadata: { name: "Local App" },
+      requestedScopes: [
+        { methods: [Method.GetData, Method.SetData], fields: [{ path: "/profile", read: true, write: true }] },
+      ],
+    });
+    expect(local.namespace).toBe("web:https://app.example.com");
+    expect(local.grant.verified).toBe(true);
   });
 });
